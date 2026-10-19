@@ -1,0 +1,22 @@
+{
+  "name": "@gamenotify/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free notification core: domain, pipeline, ports, in-memory adapters, simulators",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "development": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ]
+}
