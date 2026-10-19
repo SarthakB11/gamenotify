@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "customConditions": ["development"]
+  },
+  "include": ["packages/*/test", "apps/server/test", "apps/demo/test", "scripts", "vitest.config.ts"]
+}

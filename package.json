@@ -1,0 +1,41 @@
+{
+  "name": "gamenotify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time notification system for a gaming platform",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -b && pnpm --filter @gamenotify/web build",
+    "start": "node apps/server/dist/main.js",
+    "demo": "node apps/demo/dist/main.js",
+    "dev": "node --conditions=development --watch apps/server/src/main.ts",
+    "dev:web": "pnpm --filter @gamenotify/web dev",
+    "demo:dev": "node --conditions=development apps/demo/src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:arch": "vitest run packages/core/test/architecture.test.ts",
+    "test:golden": "node scripts/check-golden.ts",
+    "bench": "node --conditions=development scripts/bench.ts",
+    "load:sse": "node scripts/load-sse.ts",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:arch && pnpm build && pnpm test:golden",
+    "clean": "rm -rf packages/*/dist apps/*/dist apps/*/tsconfig.tsbuildinfo packages/*/tsconfig.tsbuildinfo coverage"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@gamenotify/core": "workspace:*",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "5.0.5",
+    "fast-check": "4.10.2",
+    "mitata": "1.0.34",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}
