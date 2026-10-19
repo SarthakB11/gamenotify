@@ -48,3 +48,91 @@ The AI asked round 2 (rarity, PvP, muted behaviour, grouping), then built, verif
 | **Gate-driven loop** | "Done means `pnpm verify` is green." | The AI self-corrects against objective checks |
 | **Hostile review** | "Review this as a staff engineer looking for unbounded memory, event-loop stalls and flaky tests." | Finds design bugs before they are coded |
 | **Measure, then optimise** | "Profile first; optimise only the top frames; re-measure." | Avoids speculative optimisation and produced a 6× win |
+
+## 6. Session 2: Claude Code (repository push)
+
+The project zip from session 1 was attached to a Claude Code session (claude.ai/code) running against the empty GitHub repo. The prompt, verbatim (the attachment path is shortened):
+
+````text
+@gamenotify.zip You're in my public GitHub repo for GameNotify (a real-time notification
+system for a gaming platform). The repo root contains `gamenotify.zip` (or I attached it to
+this message). The zip holds the complete, already-verified project with files at the top level:
+package.json, pnpm-lock.yaml, apps/, packages/, docs/, scripts/, test/, CLAUDE.md, README.md and so on.
+
+GOAL: turn the zip into the repository's contents, re-verify it, and push a clean, reviewable commit
+history to `main`. Do NOT change application behaviour, user-facing messages, tests or the golden file,
+unless a check fails and a minimal fix is required. If that happens, explain each fix.
+
+1. Unpack
+   - Unzip `gamenotify.zip` into the repo root (overwrite nothing else; the repo is otherwise empty).
+   - Remove the zip from the working tree (`git rm` it if it was committed).
+   - Read CLAUDE.md and follow it for the rest of the session.
+
+2. Environment
+   - Need Node.js >= 24 (22.18+ also works, with engine warnings) and pnpm 10.
+   - Run `corepack enable` (or `npm i -g pnpm@10.28.0`), then `pnpm install --frozen-lockfile`.
+
+3. Verify (all must pass before committing)
+   - `pnpm verify`. Expect:
+     - Biome clean
+     - typecheck clean
+     - 134 tests passing
+     - 8 architecture tests passing
+     - build OK
+     - "demo output matches golden file ✔"
+   - `pnpm demo`. Show me the first 12 lines: the brief's four example triggers and their messages.
+   - Optional: `pnpm bench` (should print "✔ performance budgets met").
+
+4. Commit in logical steps (Conventional Commits; no node_modules/dist/coverage — .gitignore handles it):
+   a. `docs: requirements, HLD, LLD, ADRs and AI-process record`     → docs/, README.md, CLAUDE.md
+   b. `build: pnpm monorepo with TypeScript 7, Biome and Vitest`        → root configs, lockfile, .nvmrc, .env.example
+   c. `feat(core): domain, ports, event bus, notification pipeline, adapters, simulators` → packages/core (src + tests)
+   d. `feat(server): Fastify SSE gateway, REST API, dev auth, metrics`  → apps/server
+   e. `feat(demo): console walkthrough of the brief's triggers + golden test` → apps/demo, test/golden, scripts/check-golden.ts
+   f. `feat(web): React live-notifications client`                      → apps/web
+   g. `ci: GitHub Actions, Docker image, benchmark and SSE load scripts` → .github/, Dockerfile, docker-compose.yml, .dockerignore, scripts/bench.ts, scripts/load-sse.ts
+   h. `chore: remove upload archive` (only if the zip had been committed)
+
+5. Record this session (the AI process is part of the deliverable)
+   - Append a section "## 6. Session 2: Claude Code (repository push)" to docs/ai-process/prompts.md.
+   - Paste this prompt verbatim in it, plus 3–5 bullets on what you did, what you verified (with numbers)
+     and any fixes.
+   - Also add one row to the tools list in docs/ai-process/README.md if needed.
+   - Commit as `docs(ai-process): record Claude Code push session`.
+
+6. Push to `main`. If this environment can only push to a feature branch, push the branch, open a PR
+   into `main` titled "GameNotify: real-time notification system", and give me the link
+   so I can merge it.
+
+7. CI
+   - Watch the GitHub Actions run (`gh run watch` or `gh run list`). Jobs:
+     - verify on Node 24 and 26
+     - performance budgets
+     - docker image
+   - If a job fails for an environment reason (runner differences, action versions), make the smallest
+     fix, push, and re-check. Never loosen test assertions or performance budgets to make CI pass;
+     ask me first.
+
+8. Final reply to me:
+   - the repo URL and the default-branch commit list
+   - CI status per job
+   - the `pnpm demo` excerpt
+   - any fixes you made and why
+   - the exact local run commands for the reviewer: `pnpm install && pnpm build && pnpm start` (open
+     http://localhost:3000), `pnpm demo`, or `docker compose up --build`.
+
+Do NOT:
+- add secrets or tokens to the repo
+- rewrite the design docs beyond the ai-process note above
+
+````
+
+**What the AI did:**
+
+- **Unpacked** the attached zip (137 files) into the empty repo. The zip was never committed, so step h was not needed. No PDF or secrets were in the archive.
+- **Verified before committing** on Node 22.22 with pnpm 10.28.0. Engine warnings were expected. `pnpm install --frozen-lockfile` resolved 139 packages. `pnpm verify` passed: Biome clean on 108 files, typecheck clean, **134/134 tests** in 17 files, **8/8 architecture tests**, build OK (web bundle 230 kB, 72 kB gzip) and "demo output matches golden file ✔".
+- **Ran the extra CI steps locally**:
+  - `pnpm test:coverage`: 97.2% statements, 90.2% branches, 98.6% lines.
+  - `pnpm bench`: about 6.4 µs per dispatched event, 92.8k events/s end to end, worst p99 27.6 µs, "✔ performance budgets met".
+  - `pnpm load:sse` with 2,000 connections at 1,000 events/s for 10 s: 9,850/9,850 delivered, p50 7 ms, p99 20 ms, 146 MB RSS.
+- **Committed** in the seven Conventional Commit steps (a–g) above, with the developer as author. **No fixes were needed**: application code, messages, tests and the golden file are unchanged from the zip.
