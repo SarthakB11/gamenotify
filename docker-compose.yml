@@ -1,0 +1,13 @@
+services:
+  notifications:
+    build: .
+    image: gamenotify:local
+    ports:
+      - "3000:3000"
+    environment:
+      # Demo defaults. In production set NODE_ENV=production plus AUTH_SECRET and INTERNAL_API_KEY.
+      NODE_ENV: development
+      LOG_LEVEL: info
+      GROUP_WINDOW_MS: "5000"
+    stop_grace_period: 15s
+    restart: unless-stopped
