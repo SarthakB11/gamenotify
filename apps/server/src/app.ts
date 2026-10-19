@@ -1,0 +1,367 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import fastifyStatic from '@fastify/static';
+import {
+  buildCore,
+  type Core,
+  EventId,
+  InMemoryPlayerDirectory,
+  type NotificationId,
+  type PlatformEvent,
+  PlayerId,
+  type PreferencesPatch,
+  SEED,
+  systemClock,
+  toInboxEntryDto,
+} from '@gamenotify/core';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { collectDefaultMetrics, Registry } from 'prom-client';
+import { DevAuthenticator } from './auth/dev-auth.ts';
+import type { ServerConfig } from './config.ts';
+import { problem } from './http/problem.ts';
+import {
+  idParams,
+  loginBody,
+  pageQuery,
+  platformEventBody,
+  preferencesPatch,
+  readAllBody,
+  type SimulateAction,
+  simulateBody,
+} from './http/schemas.ts';
+import { PromMetrics, pinoAdapter } from './observability/adapters.ts';
+import { ConnectionRegistry, SseNotificationSender } from './sse/connection-registry.ts';
+import { controlFrame, cursorId, notificationFrame, parseCursor } from './sse/frame.ts';
+import { SseConnection } from './sse/sse-connection.ts';
+
+export interface App {
+  readonly server: FastifyInstance;
+  readonly core: Core;
+  readonly registry: ConnectionRegistry;
+  readonly metricsRegistry: Registry;
+  /** Graceful shutdown: readiness off → stop HTTP → drain core → close streams. */
+  close(): Promise<void>;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    playerId: PlayerId | null;
+  }
+}
+
+export async function buildApp(config: ServerConfig): Promise<App> {
+  const server = Fastify({
+    logger: { level: config.logLevel },
+    ajv: {
+      customOptions: {
+        removeAdditional: false,
+        coerceTypes: 'array',
+        useDefaults: true,
+        allErrors: false,
+        allowUnionTypes: true,
+      },
+    },
+    return503OnClosing: true,
+  });
+
+  const metricsRegistry = new Registry();
+  if (config.env !== 'test') collectDefaultMetrics({ register: metricsRegistry });
+  const metrics = new PromMetrics(metricsRegistry);
+  const logger = pinoAdapter(server.log);
+  if (config.authSecretGenerated) logger.warn({}, 'AUTH_SECRET not set: generated an ephemeral dev secret');
+
+  const epoch = randomUUID().slice(0, 8);
+  const registry = new ConnectionRegistry(config.sse.maxConnectionsPerPlayer, metrics);
+  const directory = new InMemoryPlayerDirectory([
+    ...SEED.players,
+    ...Array.from({ length: config.syntheticPlayers }, (_, i) => ({ id: PlayerId(1001 + i), displayName: `Bot${1001 + i}` })),
+  ]);
+  const core = buildCore(
+    { sender: new SseNotificationSender(registry, epoch), logger, metrics, inboxEpoch: epoch, directory },
+    config.core,
+  );
+  const auth = new DevAuthenticator(config.authSecret);
+  let ready = true;
+
+  // ── Cross-cutting hooks ────────────────────────────────────────────────────
+  server.decorateRequest('playerId', null);
+  server.addHook('onRequest', async (req) => {
+    req.playerId = auth.authenticate(req);
+  });
+  server.addHook('onSend', async (_req, reply, payload) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header(
+      'Content-Security-Policy',
+      "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+    );
+    return payload;
+  });
+  server.setErrorHandler((error: FastifyError, _req, reply) => {
+    if (error.validation) return problem(reply, 400, 'Invalid request', error.message);
+    const status = error.statusCode && error.statusCode < 500 ? error.statusCode : 500;
+    if (status >= 500) server.log.error({ err: error }, 'unhandled error');
+    return problem(reply, status, status >= 500 ? 'Internal Server Error' : error.message);
+  });
+
+  const requirePlayer = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (req.playerId === null) return problem(reply, 401, 'Unauthorized', 'Log in via POST /v1/dev/login');
+  };
+  const requireInternalKey = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!config.internalApiKey || req.headers['x-internal-key'] !== config.internalApiKey) {
+      return problem(reply, 401, 'Unauthorized', 'Missing or invalid x-internal-key');
+    }
+  };
+  const devOnly = async (_req: FastifyRequest, reply: FastifyReply) => {
+    if (config.env === 'production') return problem(reply, 404, 'Not Found');
+  };
+
+  // ── Health & metrics ───────────────────────────────────────────────────────
+  server.get('/healthz', async () => ({ status: 'ok' }));
+  server.get('/readyz', async (_req, reply) =>
+    ready ? { status: 'ready', connections: registry.size, busDepth: core.bus.depth } : problem(reply, 503, 'Draining'),
+  );
+  server.get('/metrics', async (_req, reply) => reply.type(metricsRegistry.contentType).send(await metricsRegistry.metrics()));
+
+  // ── Dev auth & players ─────────────────────────────────────────────────────
+  server.get('/v1/players', async () => SEED.players.map((p) => ({ id: p.id, displayName: p.displayName })));
+
+  server.post<{ Body: { playerId: number } }>(
+    '/v1/dev/login',
+    { schema: { body: loginBody }, preHandler: devOnly },
+    async (req, reply) => {
+      const id = PlayerId(req.body.playerId);
+      const profile = core.directory.get(id);
+      if (!profile) return problem(reply, 404, 'Unknown player');
+      const token = auth.issue(id);
+      reply.header('Set-Cookie', auth.cookie(token, req.protocol === 'https'));
+      return { playerId: id, displayName: profile.displayName, token };
+    },
+  );
+
+  server.post('/v1/dev/logout', async (_req, reply) => {
+    reply.header('Set-Cookie', 'gid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+    return reply.code(204).send();
+  });
+
+  server.get('/v1/me', { preHandler: requirePlayer }, async (req) => {
+    const id = req.playerId as PlayerId;
+    return { playerId: id, displayName: core.directory.get(id)?.displayName ?? `#${id}`, unread: core.inboxService.unread(id) };
+  });
+
+  // ── Real-time stream (SSE) ─────────────────────────────────────────────────
+  server.get<{ Querystring: { lastEventId?: string } }>('/v1/stream', { preHandler: requirePlayer }, (req, reply) => {
+    const player = req.playerId as PlayerId;
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.socket?.setNoDelay(true);
+    res.socket?.setKeepAlive(true, 30_000);
+
+    const conn = new SseConnection({
+      playerId: player,
+      res,
+      maxQueued: config.sse.maxBufferedFrames,
+      now: systemClock.now,
+      onEvict: (c, reason) => {
+        metrics.inc('sse_evictions_total', { reason });
+        logger.warn({ playerId: c.playerId, connId: c.id, reason }, 'sse connection evicted');
+      },
+    });
+    // 1) register first (live frames are buffered), 2) replay, 3) go live — no gap, no duplicates.
+    registry.add(conn);
+    conn.write(`retry: ${config.sse.retryMs}\n\n`);
+
+    const inbox = core.inbox;
+    const lastSeq = inbox.lastSeq(player);
+    const cursor = parseCursor(req.headers['last-event-id'] ?? req.query.lastEventId);
+    const resync = (reason: string) => {
+      metrics.inc('sse_resync_total', { reason });
+      conn.write(controlFrame('resync', { reason, epoch: inbox.epoch, lastSeq }, cursorId(inbox.epoch, lastSeq)));
+      conn.lastSeq = lastSeq;
+    };
+
+    if (cursor === null) {
+      conn.write(
+        controlFrame('hello', { epoch: inbox.epoch, lastSeq, unread: inbox.unreadCount(player) }, cursorId(inbox.epoch, lastSeq)),
+      );
+      conn.lastSeq = lastSeq;
+    } else if (cursor.epoch !== inbox.epoch) {
+      resync('restart');
+    } else {
+      const r = inbox.since(player, cursor.seq, config.sse.replayLimit);
+      if (r.kind === 'resync') resync('evicted');
+      else if (r.entries.length === config.sse.replayLimit && (r.entries.at(-1)?.seq ?? 0) < lastSeq) resync('too_far_behind');
+      else {
+        for (const e of r.entries) {
+          conn.write(notificationFrame(inbox.epoch, e));
+          conn.lastSeq = e.seq;
+        }
+        if (r.entries.length > 0) metrics.inc('sse_replayed_total', {}, r.entries.length);
+        conn.lastSeq = Math.max(conn.lastSeq, cursor.seq);
+      }
+    }
+    conn.goLive();
+
+    req.raw.on('close', () => {
+      conn.close();
+      registry.remove(conn);
+    });
+  });
+
+  // ── Inbox ──────────────────────────────────────────────────────────────────
+  server.get<{ Querystring: { before?: number; limit: number } }>(
+    '/v1/notifications',
+    { schema: { querystring: pageQuery }, preHandler: requirePlayer },
+    async (req) => {
+      const page = core.inboxService.page(req.playerId as PlayerId, req.query.before ?? null, req.query.limit);
+      return { ...page, entries: page.entries.map(toInboxEntryDto) };
+    },
+  );
+
+  server.post<{ Params: { id: string } }>(
+    '/v1/notifications/:id/read',
+    { schema: { params: idParams }, preHandler: requirePlayer },
+    async (req, reply) =>
+      core.inboxService.markRead(req.playerId as PlayerId, req.params.id as NotificationId)
+        ? reply.code(204).send()
+        : problem(reply, 404, 'Notification not found'),
+  );
+
+  server.post<{ Body: { upToSeq?: number } | null }>(
+    '/v1/notifications/read-all',
+    { schema: { body: readAllBody }, preHandler: requirePlayer },
+    async (req) => ({ marked: core.inboxService.markAllRead(req.playerId as PlayerId, req.body?.upToSeq) }),
+  );
+
+  // ── Preferences (merge-patch + ETag/If-Match) ──────────────────────────────
+  const etag = (v: number) => `"v${v}"`;
+  server.get('/v1/preferences', { preHandler: requirePlayer }, async (req, reply) => {
+    const p = core.preferences.get(req.playerId as PlayerId);
+    reply.header('ETag', etag(p.version));
+    return p;
+  });
+
+  server.patch<{ Body: PreferencesPatch }>(
+    '/v1/preferences',
+    { schema: { body: preferencesPatch }, preHandler: requirePlayer },
+    async (req, reply) => {
+      const ifMatch = req.headers['if-match'];
+      let expected: number | undefined;
+      if (typeof ifMatch === 'string' && ifMatch !== '*') {
+        const m = /^(?:W\/)?"v(\d+)"$/.exec(ifMatch.trim());
+        if (!m) return problem(reply, 400, 'Invalid If-Match header');
+        expected = Number(m[1]);
+      }
+      const r = core.preferences.patch(req.playerId as PlayerId, req.body, expected);
+      if (!r.ok) {
+        return r.error.code === 'VERSION_CONFLICT'
+          ? problem(reply, 412, 'Precondition Failed', 'Preferences were changed elsewhere; refetch and retry')
+          : problem(reply, 400, 'Invalid preferences', r.error.message, { field: r.error.field });
+      }
+      reply.header('ETag', etag(r.value.version));
+      return r.value;
+    },
+  );
+
+  // ── Ingestion for real producers ───────────────────────────────────────────
+  server.post<{ Body: Record<string, unknown> & { kind: string } }>(
+    '/v1/events',
+    { schema: { body: platformEventBody }, preHandler: requireInternalKey },
+    async (req, reply) => {
+      const body = req.body;
+      const event = {
+        ...body,
+        eventId: EventId(typeof body.eventId === 'string' ? body.eventId : randomUUID()),
+        occurredAt: typeof body.occurredAt === 'number' ? body.occurredAt : Date.now(),
+      } as unknown as PlatformEvent;
+      if (core.bus.publish(event) === 'rejected') {
+        reply.header('Retry-After', '1');
+        return problem(reply, 503, 'Event bus at capacity');
+      }
+      return reply.code(202).send({ accepted: true, eventId: event.eventId });
+    },
+  );
+
+  // ── Dev simulator (drives the web demo; mirrors the brief's calls) ─────────
+  server.post<{ Body: { action: SimulateAction; args: (number | string)[]; repeat: number } }>(
+    '/v1/dev/simulate',
+    { schema: { body: simulateBody }, preHandler: devOnly },
+    async (req, reply) => {
+      const { action, args, repeat } = req.body;
+      const [a, b] = args;
+      const results: string[] = [];
+      try {
+        for (let i = 0; i < repeat; i++) results.push(simulate(core, action, Number(a), b as number | string));
+      } catch (e) {
+        return problem(reply, 400, 'Invalid simulation', (e as Error).message);
+      }
+      return reply.code(202).send({ action, args, results });
+    },
+  );
+
+  server.get<{ Querystring: { limit?: number } }>('/v1/admin/dlq', { preHandler: requireInternalKey }, async () =>
+    core.dlq.list(100).map((d) => ({ ...d, entry: toInboxEntryDto(d.entry) })),
+  );
+
+  // ── Static web client (single origin → no CORS, cookies just work) ─────────
+  const webDir = config.webDistDir ?? join(import.meta.dirname, '../../web/dist');
+  if (existsSync(join(webDir, 'index.html'))) {
+    await server.register(fastifyStatic, { root: webDir, wildcard: false });
+    server.setNotFoundHandler((req, reply) =>
+      req.method === 'GET' && !req.url.startsWith('/v1/') ? reply.sendFile('index.html') : problem(reply, 404, 'Not Found'),
+    );
+  } else {
+    server.setNotFoundHandler((_req, reply) => problem(reply, 404, 'Not Found'));
+  }
+
+  registry.startHeartbeat(config.sse.heartbeatMs);
+
+  return {
+    server,
+    core,
+    registry,
+    metricsRegistry,
+    async close() {
+      ready = false;
+      registry.stopHeartbeat();
+      await core.shutdown();
+      registry.closeAll();
+      await server.close();
+    },
+  };
+}
+
+function simulate(core: Core, action: SimulateAction, a: number, b: number | string): string {
+  const n = (v: number | string) => {
+    const x = Number(v);
+    if (!Number.isInteger(x)) throw new RangeError(`Expected an integer, got "${v}"`);
+    return x;
+  };
+  switch (action) {
+    case 'playerLeveledUp':
+      return core.gameEngine.playerLeveledUp(a, n(b));
+    case 'itemAcquired':
+      return core.gameEngine.itemAcquired(a, String(b));
+    case 'challengeCompleted':
+      return core.gameEngine.challengeCompleted(a, String(b));
+    case 'playerAttacked':
+      return core.gameEngine.playerAttacked(a, n(b));
+    case 'playerDefeated':
+      return core.gameEngine.playerDefeated(a, n(b));
+    case 'friendRequestSent':
+      return core.socialSystem.friendRequestSent(a, n(b));
+    case 'friendRequestAccepted':
+      return core.socialSystem.friendRequestAccepted(a, n(b));
+    case 'playerFollowed':
+      return core.socialSystem.playerFollowed(a, n(b));
+  }
+}

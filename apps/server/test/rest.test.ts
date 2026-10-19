@@ -1,0 +1,217 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { api, login, startApp } from './support.ts';
+
+let stop: (() => Promise<void>) | undefined;
+afterEach(async () => {
+  await stop?.();
+  stop = undefined;
+});
+const setup = async (env: Record<string, string> = {}) => {
+  const s = await startApp(env);
+  stop = s.stop;
+  return s;
+};
+
+describe('auth & health', () => {
+  it('health, readiness, metrics', async () => {
+    const { base } = await setup();
+    const call = api(base);
+    expect((await call('/healthz')).body).toEqual({ status: 'ok' });
+    expect((await call('/readyz')).body).toMatchObject({ status: 'ready' });
+    const m = await call('/metrics');
+    expect(m.status).toBe(200);
+    expect(m.headers.get('content-type')).toContain('text/plain');
+  });
+
+  it('login issues a cookie and a bearer token; /v1/me needs one', async () => {
+    const { base } = await setup();
+    expect((await api(base)('/v1/me')).status).toBe(401);
+    const r = await fetch(`${base}/v1/dev/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId: 1 }),
+    });
+    const cookie = r.headers.get('set-cookie') as string;
+    expect(cookie).toMatch(/^gid=.+; Path=\/; HttpOnly; SameSite=Lax/);
+    const me = await api(base)('/v1/me', { headers: { cookie: cookie.split(';')[0] as string } });
+    expect(me.body).toEqual({ playerId: 1, displayName: 'Aria', unread: 0 });
+    expect((await api(base, 'forged.token')('/v1/me')).status).toBe(401);
+  });
+
+  it('rejects unknown players and bad bodies with problem details', async () => {
+    const { base } = await setup();
+    const call = api(base);
+    expect((await call('/v1/dev/login', { method: 'POST', json: { playerId: 404 } })).status).toBe(404);
+    const bad = await call('/v1/dev/login', { method: 'POST', json: { playerId: 'x', extra: 1 } });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({ type: 'about:blank', title: 'Invalid request', status: 400 });
+    expect((await call('/v1/nope')).status).toBe(404);
+    expect((await call('/v1/players')).body).toHaveLength(6);
+  });
+
+  it('dev endpoints are disabled in production', async () => {
+    const { base } = await setup({ NODE_ENV: 'production', INTERNAL_API_KEY: 'k', LOG_LEVEL: 'silent' });
+    expect((await api(base)('/v1/dev/login', { method: 'POST', json: { playerId: 1 } })).status).toBe(404);
+  });
+});
+
+describe('inbox API', () => {
+  it('pages, marks read, marks all read', async () => {
+    const { base, app } = await setup();
+    const token = await login(base, 1);
+    const call = api(base, token);
+    for (let lvl = 2; lvl <= 4; lvl++) app.core.gameEngine.playerLeveledUp(1, lvl);
+    await app.core.settle();
+
+    const page = await call('/v1/notifications?limit=2');
+    expect(page.body).toMatchObject({ epoch: app.core.inbox.epoch, nextBefore: 2, unread: 3 });
+    expect(page.body.entries.map((e: { seq: number }) => e.seq)).toEqual([3, 2]);
+    const older = await call('/v1/notifications?before=2');
+    expect(older.body.entries.map((e: { seq: number }) => e.seq)).toEqual([1]);
+
+    const id = page.body.entries[0].notification.id;
+    expect((await call(`/v1/notifications/${id}/read`, { method: 'POST' })).status).toBe(204);
+    expect((await call('/v1/notifications/nope/read', { method: 'POST' })).status).toBe(404);
+    expect((await call('/v1/notifications/read-all', { method: 'POST', json: {} })).body).toEqual({ marked: 2 });
+    expect((await call('/v1/me')).body.unread).toBe(0);
+    expect((await call('/v1/notifications?limit=500')).status).toBe(400);
+  });
+});
+
+describe('preferences API', () => {
+  it('merge-patches with ETag / If-Match concurrency control', async () => {
+    const { base } = await setup();
+    const call = api(base, await login(base, 1));
+    const get = await call('/v1/preferences');
+    expect(get.headers.get('etag')).toBe('"v0"');
+    expect(get.body.categories).toEqual({ GAME: true, SOCIAL: true });
+
+    const patched = await call('/v1/preferences', {
+      method: 'PATCH',
+      json: { categories: { SOCIAL: false }, typeOverrides: { NEW_FOLLOWER: true } },
+      headers: { 'if-match': '"v0"' },
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.headers.get('etag')).toBe('"v1"');
+    expect(patched.body).toMatchObject({ categories: { GAME: true, SOCIAL: false }, typeOverrides: { NEW_FOLLOWER: true } });
+
+    const stale = await call('/v1/preferences', {
+      method: 'PATCH',
+      json: { categories: { GAME: false } },
+      headers: { 'if-match': '"v0"' },
+    });
+    expect(stale.status).toBe(412);
+    expect((await call('/v1/preferences', { method: 'PATCH', json: {}, headers: { 'if-match': 'garbage' } })).status).toBe(400);
+  });
+
+  it('validates input', async () => {
+    const { base } = await setup();
+    const call = api(base, await login(base, 1));
+    expect((await call('/v1/preferences', { method: 'PATCH', json: { categories: { PVP: true } } })).status).toBe(400);
+    expect((await call('/v1/preferences', { method: 'PATCH', json: { typeOverrides: { NOPE: true } } })).status).toBe(400);
+    const tz = await call('/v1/preferences', {
+      method: 'PATCH',
+      json: { quietHours: { start: '22:00', end: '07:00', timeZone: 'Nowhere/City' } },
+    });
+    expect(tz.status).toBe(400);
+    expect(tz.body.field).toBe('quietHours.timeZone');
+    const ok = await call('/v1/preferences', {
+      method: 'PATCH',
+      json: { quietHours: { start: '22:00', end: '07:00', timeZone: 'Asia/Kolkata' } },
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it('preferences take effect on the pipeline', async () => {
+    const { base, app } = await setup();
+    const call = api(base, await login(base, 1));
+    await call('/v1/preferences', { method: 'PATCH', json: { categories: { SOCIAL: false } } });
+    app.core.socialSystem.friendRequestSent(3, 1);
+    app.core.gameEngine.playerLeveledUp(1, 5);
+    await app.core.settle();
+    const page = await call('/v1/notifications');
+    expect(page.body.entries.map((e: { notification: { type: string } }) => e.notification.type)).toEqual(['LEVEL_UP']);
+  });
+});
+
+describe('POST /v1/events (ingestion for real producers)', () => {
+  const key = { 'x-internal-key': 'dev-internal-key' };
+
+  it('accepts valid events and dispatches them', async () => {
+    const { base, app } = await setup();
+    const r = await api(base)('/v1/events', {
+      method: 'POST',
+      headers: key,
+      json: { kind: 'game.item_acquired', eventId: 'ext-1', playerId: 2, itemId: 'SwordOfAzeroth' },
+    });
+    expect(r.status).toBe(202);
+    expect(r.body).toEqual({ accepted: true, eventId: 'ext-1' });
+    await app.core.settle();
+    expect(app.core.inboxService.page(2 as never, null, 1).entries[0]?.notification.message).toBe(
+      "You've acquired the legendary Sword of Azeroth!",
+    );
+  });
+
+  it('requires the internal key and a valid schema', async () => {
+    const { base } = await setup();
+    const call = api(base);
+    expect(
+      (await call('/v1/events', { method: 'POST', json: { kind: 'game.player_leveled_up', playerId: 1, newLevel: 2 } })).status,
+    ).toBe(401);
+    expect((await call('/v1/events', { method: 'POST', headers: key, json: { kind: 'game.unknown', playerId: 1 } })).status).toBe(
+      400,
+    );
+    expect(
+      (await call('/v1/events', { method: 'POST', headers: key, json: { kind: 'game.player_leveled_up', playerId: 1 } })).status,
+    ).toBe(400);
+  });
+
+  it('returns 503 + Retry-After when the bus is full', async () => {
+    const { base, app } = await setup({ BUS_CAPACITY: '2' });
+    // Stall the consumer so the queue fills up deterministically.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    app.core.bus.subscribeAll(() => gate);
+    const body = { kind: 'game.player_leveled_up', playerId: 1, newLevel: 2 };
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const r = await api(base)('/v1/events', { method: 'POST', headers: key, json: body });
+      statuses.push(r.status);
+      if (r.status === 503) expect(r.headers.get('retry-after')).toBe('1');
+    }
+    expect(statuses).toContain(503);
+    expect(statuses[0]).toBe(202);
+    release();
+  });
+
+  it('admin DLQ requires the internal key', async () => {
+    const { base } = await setup();
+    expect((await api(base)('/v1/admin/dlq')).status).toBe(401);
+    expect((await api(base)('/v1/admin/dlq', { headers: key })).body).toEqual([]);
+  });
+});
+
+describe('POST /v1/dev/simulate', () => {
+  it('drives the brief API and validates arguments', async () => {
+    const { base } = await setup();
+    const call = api(base, await login(base, 1));
+    const ok = await call('/v1/dev/simulate', { method: 'POST', json: { action: 'playerLeveledUp', args: [1, 15] } });
+    expect(ok.status).toBe(202);
+    expect(ok.body.results).toEqual(['accepted']);
+    for (const [action, args] of [
+      ['itemAcquired', [2, 'SwordOfAzeroth']],
+      ['challengeCompleted', [6, 'DragonsLair']],
+      ['playerAttacked', [5, 6]],
+      ['playerDefeated', [5, 4]],
+      ['friendRequestSent', [3, 1]],
+      ['friendRequestAccepted', [1, 3]],
+      ['playerFollowed', [2, 1]],
+    ] as const) {
+      expect((await call('/v1/dev/simulate', { method: 'POST', json: { action, args } })).status).toBe(202);
+    }
+    expect((await call('/v1/dev/simulate', { method: 'POST', json: { action: 'playerLeveledUp', args: [1, 'x'] } })).status).toBe(
+      400,
+    );
+    expect((await call('/v1/dev/simulate', { method: 'POST', json: { action: 'hack', args: [1, 2] } })).status).toBe(400);
+  });
+});
