@@ -1,0 +1,52 @@
+=== GameNotify Notification System — demo ===
+
+-- Brief example triggers --
+gameEngine.playerLeveledUp(1, 15)
+→ #1 Aria   [GAME/LEVEL_UP]                Congratulations! You've reached level 15!
+gameEngine.itemAcquired(2, "SwordOfAzeroth")
+→ #2 Bram   [GAME/ITEM_ACQUIRED]           You've acquired the legendary Sword of Azeroth!
+socialSystem.friendRequestSent(3, 1)
+→ #1 Aria   [SOCIAL/FRIEND_REQUEST]        Player 'Kael' has sent you a friend request.
+socialSystem.friendRequestAccepted(1, 3)
+→ #3 Kael   [SOCIAL/FRIEND_ACCEPTED]       Player 'Aria' accepted your friend request.
+
+-- Preferences: Mira (#4) disables SOCIAL --
+socialSystem.friendRequestSent(5, 4)
+✗ #4 Mira   suppressed: CATEGORY_DISABLED (FRIEND_REQUEST)
+
+-- Rarity gate: only rare and above notify --
+gameEngine.itemAcquired(2, "RustyDagger")
+✗ #2 Bram   suppressed: BELOW_RARITY_THRESHOLD (ITEM_ACQUIRED)
+
+-- Challenge + PvP --
+gameEngine.challengeCompleted(6, "DragonsLair")
+→ #6 Nyx    [GAME/CHALLENGE_COMPLETED]     Challenge complete! You've conquered 'Dragon's Lair'.
+gameEngine.playerDefeated(5, 4)   // Zed defeats Mira → both notified
+→ #4 Mira   [GAME/PVP_DEFEATED]            You were defeated by Player 'Zed'.
+→ #5 Zed    [GAME/PVP_VICTORY]             You defeated Player 'Mira'!
+
+-- Follower burst: 5 players follow Aria within 300 ms --
+socialSystem.playerFollowed(2, 1)
+socialSystem.playerFollowed(3, 1)
+socialSystem.playerFollowed(4, 1)
+socialSystem.playerFollowed(5, 1)
+socialSystem.playerFollowed(6, 1)
+→ #1 Aria   [SOCIAL/NEW_FOLLOWER]          Player 'Bram' started following you.
+   … grouping window (300 ms) …
+→ #1 Aria   [SOCIAL/NEW_FOLLOWER]          Player 'Kael' and 3 others started following you.
+
+-- Re-publish the first event (same eventId) — at-least-once producers --
+bus.publish(levelUp #1 → 16)
+→ #1 Aria   [GAME/LEVEL_UP]                Congratulations! You've reached level 16!
+bus.publish(same event again)
+✗ #1 Aria   suppressed: DUPLICATE (LEVEL_UP)
+
+-- Aria's inbox (newest first) --
+   5  Congratulations! You've reached level 16!
+   4  Player 'Kael' and 3 others started following you.
+   3  Player 'Bram' started following you.
+   2  Player 'Kael' has sent you a friend request.
+   1  Congratulations! You've reached level 15!
+  unread: 5
+
+Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped

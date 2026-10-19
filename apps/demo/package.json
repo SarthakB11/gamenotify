@@ -1,0 +1,11 @@
+{
+  "name": "@gamenotify/demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Console walkthrough of the brief's example triggers (core only, no HTTP)",
+  "main": "dist/main.js",
+  "dependencies": {
+    "@gamenotify/core": "workspace:*"
+  }
+}
