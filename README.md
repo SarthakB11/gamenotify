@@ -13,6 +13,37 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 
 ---
 
+## Demo (2 min)
+
+<p align="center">
+  <a href="docs/media/demo.mp4">
+    <img src="docs/media/demo.webp" width="100%" alt="Demo: the console demo of the brief's triggers, then two players (Aria and Kael) in two browsers. Notifications arrive live over SSE, bursts are grouped, a PvP defeat notifies both players, and preferences disable or mute delivery.">
+  </a>
+</p>
+
+<p align="center"><b>▶ <a href="docs/media/demo.mp4">Watch the full-quality video (MP4, 1080p, 2 min 13 s)</a></b></p>
+
+The recording shows the real server, SSE stream and React client running locally, driven by an automated browser:
+
+1. **`pnpm demo`:** the brief's four example triggers and their exact messages.
+2. **Two players, two browsers:** Aria and Kael sign in, and each opens a live Server-Sent Events stream.
+3. **The brief's triggers, live:**
+   - level up and a legendary item each produce a toast and an inbox entry
+   - a common item is filtered out
+   - Kael's friend request reaches Aria's screen in a few tens of milliseconds
+   - Aria's acceptance notifies Kael
+4. **Bursts, grouping and PvP:**
+   - the first follower or attack is delivered instantly, and the rest of the burst becomes one digest
+   - a defeat notifies both players
+5. **Preferences:**
+   - turning social events off means nothing is created
+   - muting keeps notifications silently in the inbox, without a pop-up
+   - read receipts sync with the server
+
+For pacing, the recording runs the server with `GROUP_WINDOW_MS=6000`; the default grouping window is 10 s.
+
+---
+
 ## Quick start
 
 **Requirements:** Node.js ≥ 24 and pnpm 10. Run `corepack enable` first and pnpm comes from `packageManager` automatically.
