@@ -14,6 +14,7 @@ import {
   PlayerId,
   SEED,
 } from '@gamenotify/core';
+import { FakeClock, ManualScheduler } from '@gamenotify/core/testing';
 
 const color = process.stdout.isTTY && !process.env.NO_COLOR;
 const out = (line = '') => process.stdout.write(`${line}\n`);
@@ -23,8 +24,12 @@ const red = (s: string) => (color ? `\u001b[31m${s}\u001b[0m` : s);
 
 const windowMs = Number(process.env.DEMO_GROUP_WINDOW_MS ?? 1500);
 const directory = new InMemoryPlayerDirectory(SEED.players);
+// Virtual time: the grouping window elapses when the demo says so, not on the wall clock, so the
+// output order cannot depend on machine load. Everything else is the real pipeline.
+const clock = new FakeClock(Date.now());
+const scheduler = new ManualScheduler(clock);
 const core = buildCore(
-  { sender: new ConsoleNotificationSender({ write: out, directory, color }), directory },
+  { sender: new ConsoleNotificationSender({ write: out, directory, color }), directory, clock, scheduler },
   { grouping: { windowMs, maxWindowMs: windowMs * 4 } },
 );
 
@@ -54,7 +59,6 @@ const call = (label: string, fn: () => unknown) => {
   published++;
 };
 const settle = () => core.settle();
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const { gameEngine, socialSystem } = core;
 
@@ -91,14 +95,14 @@ for (const follower of [2, 3, 4, 5, 6]) {
 }
 await settle();
 out(dim(`   … grouping window (${windowMs} ms) …`));
-await sleep(windowMs + 200);
+scheduler.advance(windowMs + 200);
 await settle();
 
 section('Re-publish the first event (same eventId) — at-least-once producers');
 const replay: PlatformEvent = {
   kind: 'game.player_leveled_up',
   eventId: EventId('demo-replay-1'),
-  occurredAt: Date.now(),
+  occurredAt: clock.now(),
   playerId: PlayerId(1),
   newLevel: 16,
 };
