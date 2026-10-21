@@ -145,14 +145,24 @@ export class NotificationDispatcher {
   /** Trailing digest: preferences may have changed since the burst began, so they are evaluated again. */
   #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {
     const d = this.#d;
-    const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode, now: d.clock.now() };
-    const verdict = runStages(d.digestStages, ctx);
-    if (verdict.kind === 'suppress') {
-      this.#suppressed(intent.sourceEventId, intent.recipientId, intent.type, verdict.reason);
-      return;
+    // Runs from a scheduler timer, outside handle(): an escaping throw would be an uncaught exception that kills the
+    // process. The held events were already deduplicated, so there is nothing to roll back; the digest is dropped.
+    try {
+      const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode, now: d.clock.now() };
+      const verdict = runStages(d.digestStages, ctx);
+      if (verdict.kind === 'suppress') {
+        this.#suppressed(intent.sourceEventId, intent.recipientId, intent.type, verdict.reason);
+        return;
+      }
+      runStages(d.emissionStages, ctx);
+      this.#finish(intent, ctx.mode);
+    } catch (error) {
+      d.metrics.inc('dispatch_errors_total', { kind: 'digest' });
+      d.logger.error(
+        { err: error, eventId: intent.sourceEventId, playerId: intent.recipientId },
+        'digest dispatch failed; the grouped notification is dropped',
+      );
     }
-    runStages(d.emissionStages, ctx);
-    this.#finish(intent, ctx.mode);
   }
 
   #finish(intent: NotificationIntent, mode: DeliveryMode): void {

@@ -535,7 +535,7 @@ The rarity gate sits in the resolver, not the preference stage. It is a **produc
 
 Idempotency and preferences run before grouping (`pre`). The rate limiter runs after it (`post`), so events that grouping holds back never consume tokens. Only the leading-edge intent and each digest do.
 
-A digest is emitted up to `Wmax` after its events were held, so the dispatcher re-evaluates preferences (`digest` stages) and then the rate limit when it flushes. A category or type disabled during the window means the digest is never created. A mute or quiet hours starting during the window stores it as SILENT.
+A digest is emitted up to `Wmax` after its events were held, so the dispatcher re-evaluates preferences (`digest` stages) and then the rate limit when it flushes. The flush runs from a scheduler timer, so `#emitDigest` catches any throw (render, inbox), logs it and counts `dispatch_errors_total{kind="digest"}` instead of letting it escape as an uncaught exception; the digest is dropped and later events are unaffected. A category or type disabled during the window means the digest is never created. A mute or quiet hours starting during the window stores it as SILENT.
 
 ```ts
 export type Verdict = { kind: 'continue' } | { kind: 'suppress'; reason: SuppressionReason };

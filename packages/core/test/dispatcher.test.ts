@@ -130,6 +130,29 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(sender.sent[1]?.notification.groupCount).toBe(4);
   });
 
+  it('a digest that throws in the timer is contained: logged, counted, and later events still work', async () => {
+    const { core, sender, scheduler, metrics } = makeCore({ grouping: { windowMs: 1_000, maxWindowMs: 5_000 } });
+    const inbox = core.inbox;
+    const append = inbox.append.bind(inbox);
+    let failures = 0;
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    inbox.append = () => {
+      failures++;
+      throw new Error('disk full');
+    };
+    expect(() => scheduler.advance(1_000)).not.toThrow();
+    await core.settle();
+    expect(failures).toBe(1);
+    expect(metrics.count('dispatch_errors_total', { kind: 'digest' })).toBe(1);
+    expect(sender.messages()).toEqual(["Player 'Bram' started following you."]);
+
+    inbox.append = append;
+    core.gameEngine.playerLeveledUp(1, 20);
+    await core.settle();
+    expect(sender.messages()).toEqual(["Player 'Bram' started following you.", "Congratulations! You've reached level 20!"]);
+  });
+
   describe('digest never repeats the actor of the leading notification', () => {
     const burst = async (type: 'follow' | 'attack', actors: number[]) => {
       const { core, sender, scheduler } = makeCore({ grouping: { windowMs: 1_000, maxWindowMs: 5_000 } });
