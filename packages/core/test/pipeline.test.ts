@@ -177,6 +177,17 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(flushed[0]?.intent).toMatchObject({ groupCount: 2, actorIds: [2], distinctActors: 1, leadingActorId: 2 });
   });
 
+  it('cancel() forgets a group that has held nothing, so the next event is a leading edge again', () => {
+    const { g, clock } = make();
+    expect(g.offer(ctxFor('NEW_FOLLOWER', clock.now(), 2, 'k'))).toBe('pass');
+    g.cancel('k');
+    expect(g.openGroups).toBe(0);
+    expect(g.offer(ctxFor('NEW_FOLLOWER', clock.now(), 2, 'k'))).toBe('pass');
+    g.offer(ctxFor('NEW_FOLLOWER', clock.now(), 3, 'k'));
+    g.cancel('k'); // already holding events: must not be discarded
+    expect(g.openGroups).toBe(1);
+  });
+
   it('a single held intent is emitted as-is', () => {
     const { g, clock, scheduler, flushed } = make();
     g.offer(ctxFor('NEW_FOLLOWER', 0, 2, 'k'));

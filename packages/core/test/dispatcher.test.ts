@@ -183,6 +183,23 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     });
   });
 
+  it('a failed leading-edge event does not hold the producer retry in a group', async () => {
+    const { core, sender } = makeCore({ grouping: { windowMs: 10_000, maxWindowMs: 10_000 } });
+    const inbox = core.inbox;
+    const append = inbox.append.bind(inbox);
+    let failures = 1;
+    inbox.append = (...args) => {
+      if (failures-- > 0) throw new Error('disk full');
+      return append(...args);
+    };
+    core.socialSystem.playerFollowed(2, 1);
+    await core.settle();
+    expect(sender.sent).toHaveLength(0);
+    core.socialSystem.playerFollowed(2, 1); // retry
+    await core.settle();
+    expect(sender.messages()).toEqual(["Player 'Bram' started following you."]);
+  });
+
   it('PvP defeat notifies both players', async () => {
     const { core, sender } = makeCore();
     core.gameEngine.playerDefeated(5, 4);

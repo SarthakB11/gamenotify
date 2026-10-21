@@ -66,6 +66,8 @@ export class NotificationDispatcher {
   readonly #inflight = new Set<Promise<void>>();
   /** Set once the inbox holds the notification: from then on the dedup key must stay recorded. */
   #stored = false;
+  /** Group key opened by the in-flight leading-edge event; cancelled if that event then fails. */
+  #openedGroup: string | undefined;
 
   constructor(deps: DispatcherDeps) {
     this.#d = deps;
@@ -102,12 +104,14 @@ export class NotificationDispatcher {
         now: d.clock.now(),
       };
       this.#stored = false;
+      this.#openedGroup = undefined;
       try {
         this.#process(event.eventId, ctx);
       } catch (error) {
         // Mark-then-rollback: release the dedup key so the producer's retry is processed, and keep
         // going so one recipient's failure (e.g. a PvP fan-out) does not drop the others.
         if (!this.#stored) for (const stage of d.stages) stage.rollback?.(ctx);
+        if (!this.#stored && this.#openedGroup !== undefined) d.grouping.cancel(this.#openedGroup);
         d.metrics.inc('dispatch_errors_total', { kind: event.kind });
         d.logger.error({ err: error, eventId: event.eventId, playerId: r.recipientId }, 'dispatch failed; will accept a retry');
       }
@@ -127,6 +131,7 @@ export class NotificationDispatcher {
       this.#suppressed(eventId, r.recipientId, r.type, 'GROUPED');
       return;
     }
+    if (r.groupKey !== undefined) this.#openedGroup = r.groupKey;
     // Only what is emitted (leading edge, ungrouped) spends rate-limit tokens; held events never do.
     runStages(d.emissionStages, ctx);
     this.#finish(r, ctx.mode);

@@ -106,6 +106,12 @@ export class GroupingStage {
     return 'held';
   }
 
+  /** Forget a group whose leading-edge event failed, so a producer retry is a fresh leading edge. */
+  cancel(key: string): void {
+    const g = this.#groups.get(key);
+    if (g !== undefined && g.held === 0) this.#groups.delete(key);
+  }
+
   /** Emit every open group immediately (graceful shutdown, tests). */
   flushAll(): void {
     for (const key of [...this.#groups.keys()]) this.#flush(key);
