@@ -200,7 +200,7 @@ test/golden/       expected demo output (acceptance test)
 | `POST` | `/v1/notifications/:id/read` · `/v1/notifications/read-all` | Read receipts |
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |
 | `POST` | `/v1/events` | Ingestion for real producers (`x-internal-key`). Returns 202, 422 for player ids not in the directory, or 503 + `Retry-After` under back-pressure |
-| `POST` | `/v1/dev/simulate` | `{ "action": "playerLeveledUp", "args": [1, 15] }`, mirroring the brief |
+| `POST` | `/v1/dev/simulate` | No auth, dev only. `{ "action": "playerLeveledUp", "args": [1, 15] }`, mirroring the brief |
 | `GET` | `/v1/players` | Seeded players for the demo's picker. No auth |
 | `GET` | `/v1/me` | Bearer or cookie. Current player, display name and unread count |
 | `POST` | `/v1/dev/logout` | Clears the session cookie. 204 |
@@ -208,7 +208,7 @@ test/golden/       expected demo output (acceptance test)
 | `GET` | `/healthz` · `/readyz` | Liveness, and readiness (503 while draining). No auth |
 | `GET` | `/metrics` | Prometheus text. No auth: intended for an internal scrape, so do not expose it publicly |
 
-Routes without a stated key take a session: `Authorization: Bearer <token>` (or the session cookie) from `/v1/dev/login`. `/v1/dev/*` (login, logout, simulate) is the demo path and is disabled (404) when `NODE_ENV=production`; simulate needs a Bearer session token.
+Routes marked Bearer or cookie take the session from `/v1/dev/login`. `/v1/dev/login` and `/v1/dev/simulate` need no credentials, are available only when `NODE_ENV` is not `production` (the production image hides them with a 404), and simulate returns 422 for unknown player ids. `/v1/dev/logout` only clears the cookie and is not gated.
 
 Example producer request (`eventId` is optional and doubles as the idempotency key; `occurredAt` is optional epoch milliseconds):
 
