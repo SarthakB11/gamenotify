@@ -294,7 +294,7 @@ erDiagram
 | Property | Guarantee | Mechanism |
 |---|---|---|
 | Ingestion | Non-blocking; explicit rejection when full | Bounded ring-buffer bus. `publish()` returns `accepted` or `rejected` |
-| Duplicates | At most one notification per `(eventId, recipient, type)` | TTL-bounded LRU idempotency store (10 min, 100k keys) |
+| Duplicates | At most one notification per `(eventId, recipient, type)` | TTL-bounded LRU idempotency store (10 min, 100k keys). The key is released if dispatch fails before the inbox write, so a producer retry is not lost |
 | Storage | At-least-once into the inbox | Append happens before any delivery attempt |
 | Live delivery | Best effort, recoverable | Missed live pushes are replayed from the inbox using `Last-Event-ID` |
 | Ordering | Per-recipient FIFO | Single-threaded event loop plus monotonic per-player `seq`. The client dedups by `seq` |

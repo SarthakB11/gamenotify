@@ -134,6 +134,8 @@ export interface InboxRepository {
 export interface IdempotencyStore {
   /** Returns true the first time a key is seen (and records it), false for duplicates. */
   firstSeen(key: string): boolean;
+  /** Forgets a key recorded by `firstSeen`, so a retry of an event that failed mid-pipeline is not rejected. */
+  release(key: string): void;
 }
 
 // ── Delivery (driven) ──────────────────────────────────────────────────────────

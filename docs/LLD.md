@@ -367,7 +367,10 @@ export interface InboxRepository {
   unreadCount(player: PlayerId): number;
   readonly epoch: string;                                    // changes on restart (HLD ADR-005)
 }
-export interface IdempotencyStore { firstSeen(key: string): boolean }   // true = new, records it
+export interface IdempotencyStore {
+  firstSeen(key: string): boolean;   // true = new, records it
+  release(key: string): void;        // forget a key (rollback after a failed dispatch)
+}
 
 // ── Delivery (driven) — the brief's "existing notification client" ─
 export type DeliveryResult = 'DELIVERED' | 'RECIPIENT_OFFLINE' | 'FAILED';
@@ -551,6 +554,7 @@ The stages are **synchronous and allocation-free** on the happy path. `CONTINUE`
 
 - Key: `${sourceEventId}|${recipientId}|${type}`.
 - `IdempotencyStore.firstSeen(key)` returns `false` → `suppress(DUPLICATE)`.
+- **Mark-then-rollback.** The key is recorded up front, so every outcome that completes (stored, silent, grouped/held, disabled) dedupes retries. If a later step throws before the inbox holds the notification (render, append), the dispatcher calls `rollback` on the stages, which releases the key. The producer's retry is then processed rather than rejected as `DUPLICATE`. The key is per recipient, and the dispatcher isolates each recipient: one failure is logged (`dispatch_errors_total`) and the rest of a fan-out still run. Once `inbox.append` has returned the key stays recorded.
 - `TtlLruIdempotencyStore`: a `Map<string, expiresAt>` for lookup plus a `RingBuffer<{key, expiresAt}>` recording insertion order. Because the TTL is uniform, insertion order equals expiry order. On every insert:
   1. Pop the ring head while it has expired.
   2. Pop it while `size >= maxKeys`.

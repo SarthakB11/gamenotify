@@ -49,6 +49,11 @@ export class TtlLruIdempotencyStore implements IdempotencyStore {
     return true;
   }
 
+  /** The ring slot is left in place: eviction only deletes a key whose expiry still matches, so it is harmless. */
+  release(key: string): void {
+    this.#keys.delete(key);
+  }
+
   #evictExpired(now: number): void {
     for (;;) {
       const head = this.#order.peek();

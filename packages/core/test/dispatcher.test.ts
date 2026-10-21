@@ -20,6 +20,82 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(suppressed).toEqual([{ recipientId: 1, type: 'LEVEL_UP', reason: 'DUPLICATE' }]);
   });
 
+  describe('idempotency is committed only when the notification was handled', () => {
+    const levelUp: PlatformEvent = {
+      kind: 'game.player_leveled_up',
+      eventId: EventId('retry-1'),
+      occurredAt: 0,
+      playerId: PlayerId(1),
+      newLevel: 9,
+    };
+
+    it('a retry after a mid-pipeline failure is delivered exactly once', async () => {
+      const { core, sender, metrics } = makeCore();
+      const inbox = core.inbox;
+      const append = inbox.append.bind(inbox);
+      let failures = 1;
+      inbox.append = (...args) => {
+        if (failures-- > 0) throw new Error('disk full');
+        return append(...args);
+      };
+      core.bus.publish(levelUp);
+      await core.settle();
+      expect(sender.sent).toHaveLength(0);
+      expect(metrics.count('dispatch_errors_total', { kind: levelUp.kind })).toBe(1);
+
+      core.bus.publish(levelUp); // producer retry
+      core.bus.publish(levelUp); // and a redelivery of the retry
+      await core.settle();
+      expect(sender.sent).toHaveLength(1);
+      expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(1);
+    });
+
+    it('one recipient failing does not drop the other recipient of a PvP fan-out', async () => {
+      const { core, sender } = makeCore();
+      const inbox = core.inbox;
+      const append = inbox.append.bind(inbox);
+      let failures = 1;
+      inbox.append = (n, m) => {
+        if (failures-- > 0) throw new Error('boom');
+        return append(n, m);
+      };
+      const defeat: PlatformEvent = {
+        kind: 'game.pvp_defeated',
+        eventId: EventId('pvp-1'),
+        occurredAt: 0,
+        winnerId: PlayerId(1),
+        loserId: PlayerId(2),
+      };
+      core.bus.publish(defeat);
+      await core.settle();
+      expect(sender.sent).toHaveLength(1);
+      core.bus.publish(defeat);
+      await core.settle();
+      expect(sender.sent).toHaveLength(2);
+    });
+
+    it('suppressed outcomes still dedupe retries', async () => {
+      const { core, sender } = makeCore();
+      core.preferences.patch(PlayerId(1), { muteForMinutes: 30 }); // stored SILENT
+      core.bus.publish(levelUp);
+      core.bus.publish(levelUp);
+      await core.settle();
+      expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(1);
+      expect(sender.sent).toHaveLength(0);
+    });
+
+    it('property: any number of redeliveries of a set of events yields one notification per event', () => {
+      fc.assert(
+        fc.asyncProperty(fc.array(fc.integer({ min: 1, max: 5 }), { minLength: 1, maxLength: 30 }), async (ids) => {
+          const { core, sender } = makeCore({ rateLimit: { capacity: 1000 } });
+          for (const id of ids) core.bus.publish({ ...levelUp, eventId: EventId(`e${id}`), newLevel: id });
+          await core.settle();
+          expect(sender.sent).toHaveLength(new Set(ids).size);
+        }),
+      );
+    });
+  });
+
   it('rarity gate and self-actions are reported as suppressed', async () => {
     const { core, sender, suppressed } = makeCore();
     core.gameEngine.itemAcquired(2, 'RustyDagger');

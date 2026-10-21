@@ -17,6 +17,8 @@ export interface StageContext {
 export interface PipelineStage {
   readonly name: string;
   apply(ctx: StageContext): Verdict;
+  /** Undo this stage's side effects when a later step threw for the same context (optional). */
+  rollback?(ctx: StageContext): void;
 }
 
 export const runStages = (stages: readonly PipelineStage[], ctx: StageContext): Verdict => {
