@@ -109,6 +109,20 @@ describe('preferences API', () => {
       headers: { 'if-match': '"v0"' },
     });
     expect(stale.status).toBe(412);
+
+    const mergePatch = await call('/v1/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ categories: { GAME: false } }),
+      headers: { 'content-type': 'application/merge-patch+json', 'if-match': '"v1"' },
+    });
+    expect(mergePatch.status).toBe(200);
+    expect(mergePatch.body).toMatchObject({ categories: { GAME: false, SOCIAL: false } });
+    const badPatch = await call('/v1/preferences', {
+      method: 'PATCH',
+      body: '{',
+      headers: { 'content-type': 'application/merge-patch+json' },
+    });
+    expect(badPatch.status).toBe(400);
     expect((await call('/v1/preferences', { method: 'PATCH', json: {}, headers: { 'if-match': 'garbage' } })).status).toBe(400);
   });
 

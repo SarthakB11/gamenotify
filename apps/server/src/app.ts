@@ -109,6 +109,13 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     return503OnClosing: true,
   });
 
+  // RFC 7396 merge patches are JSON; parse them exactly like application/json (same body limit, same errors).
+  server.addContentTypeParser(
+    'application/merge-patch+json',
+    { parseAs: 'string' },
+    server.getDefaultJsonParser('error', 'error'),
+  );
+
   const metricsRegistry = new Registry();
   if (config.env !== 'test') collectDefaultMetrics({ register: metricsRegistry });
   const metrics = new PromMetrics(metricsRegistry);
