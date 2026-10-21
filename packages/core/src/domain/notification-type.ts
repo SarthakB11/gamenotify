@@ -40,18 +40,16 @@ export const parseRarity = (s: string): ItemRarity => {
 export interface TypeMeta {
   readonly category: NotificationCategory;
   readonly priority: Priority;
-  /** Eligible for burst grouping ("X and 3 others ..."). */
-  readonly groupable: boolean;
 }
 
 export const TYPE_META: Readonly<Record<NotificationType, TypeMeta>> = Object.freeze({
-  LEVEL_UP: { category: 'GAME', priority: Priority.NORMAL, groupable: false },
-  ITEM_ACQUIRED: { category: 'GAME', priority: Priority.NORMAL, groupable: false },
-  CHALLENGE_COMPLETED: { category: 'GAME', priority: Priority.NORMAL, groupable: false },
-  PVP_ATTACKED: { category: 'GAME', priority: Priority.HIGH, groupable: true },
-  PVP_DEFEATED: { category: 'GAME', priority: Priority.NORMAL, groupable: false },
-  PVP_VICTORY: { category: 'GAME', priority: Priority.NORMAL, groupable: false },
-  FRIEND_REQUEST: { category: 'SOCIAL', priority: Priority.NORMAL, groupable: false },
-  FRIEND_ACCEPTED: { category: 'SOCIAL', priority: Priority.NORMAL, groupable: false },
-  NEW_FOLLOWER: { category: 'SOCIAL', priority: Priority.LOW, groupable: true },
+  LEVEL_UP: { category: 'GAME', priority: Priority.NORMAL },
+  ITEM_ACQUIRED: { category: 'GAME', priority: Priority.NORMAL },
+  CHALLENGE_COMPLETED: { category: 'GAME', priority: Priority.NORMAL },
+  PVP_ATTACKED: { category: 'GAME', priority: Priority.HIGH },
+  PVP_DEFEATED: { category: 'GAME', priority: Priority.NORMAL },
+  PVP_VICTORY: { category: 'GAME', priority: Priority.NORMAL },
+  FRIEND_REQUEST: { category: 'SOCIAL', priority: Priority.NORMAL },
+  FRIEND_ACCEPTED: { category: 'SOCIAL', priority: Priority.NORMAL },
+  NEW_FOLLOWER: { category: 'SOCIAL', priority: Priority.LOW },
 } satisfies Record<NotificationType, TypeMeta>);

@@ -14,7 +14,7 @@ export interface NotificationIntent {
   readonly actorId?: PlayerId;
   readonly sourceEventId: EventId;
   readonly occurredAt: number;
-  /** Set by resolvers for groupable types. */
+  /** Set only by the PVP_ATTACKED and NEW_FOLLOWER resolvers; its presence is what makes an intent groupable. */
   readonly groupKey?: string;
   /** Set by the grouping stage when it emits an aggregated intent. */
   readonly groupCount?: number;

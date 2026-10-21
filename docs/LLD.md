@@ -132,19 +132,18 @@ export type ItemRarity = (typeof ItemRarity)[keyof typeof ItemRarity];
 export interface TypeMeta {
   readonly category: NotificationCategory;
   readonly priority: Priority;
-  readonly groupable: boolean;   // eligible for burst grouping (A6)
 }
 
 export const TYPE_META = Object.freeze({
-  LEVEL_UP:            { category: 'GAME',   priority: Priority.NORMAL, groupable: false },
-  ITEM_ACQUIRED:       { category: 'GAME',   priority: Priority.NORMAL, groupable: false },
-  CHALLENGE_COMPLETED: { category: 'GAME',   priority: Priority.NORMAL, groupable: false },
-  PVP_ATTACKED:        { category: 'GAME',   priority: Priority.HIGH,   groupable: true  },
-  PVP_DEFEATED:        { category: 'GAME',   priority: Priority.NORMAL, groupable: false },
-  PVP_VICTORY:         { category: 'GAME',   priority: Priority.NORMAL, groupable: false },
-  FRIEND_REQUEST:      { category: 'SOCIAL', priority: Priority.NORMAL, groupable: false },
-  FRIEND_ACCEPTED:     { category: 'SOCIAL', priority: Priority.NORMAL, groupable: false },
-  NEW_FOLLOWER:        { category: 'SOCIAL', priority: Priority.LOW,    groupable: true  },
+  LEVEL_UP:            { category: 'GAME',   priority: Priority.NORMAL },
+  ITEM_ACQUIRED:       { category: 'GAME',   priority: Priority.NORMAL },
+  CHALLENGE_COMPLETED: { category: 'GAME',   priority: Priority.NORMAL },
+  PVP_ATTACKED:        { category: 'GAME',   priority: Priority.HIGH },
+  PVP_DEFEATED:        { category: 'GAME',   priority: Priority.NORMAL },
+  PVP_VICTORY:         { category: 'GAME',   priority: Priority.NORMAL },
+  FRIEND_REQUEST:      { category: 'SOCIAL', priority: Priority.NORMAL },
+  FRIEND_ACCEPTED:     { category: 'SOCIAL', priority: Priority.NORMAL },
+  NEW_FOLLOWER:        { category: 'SOCIAL', priority: Priority.LOW },
 } as const satisfies Record<NotificationType, TypeMeta>);
 ```
 
@@ -250,7 +249,7 @@ export interface NotificationIntent {
   readonly params: Readonly<Record<string, JsonValue>>; // e.g. { level: 15 } | { actorId: 3 }
   readonly sourceEventId: EventId;
   readonly occurredAt: number;
-  readonly groupKey?: string;          // set by resolver when TYPE_META.groupable
+  readonly groupKey?: string;          // set by the resolver; only PVP_ATTACKED and NEW_FOLLOWER set it (the sole grouping switch)
   readonly groupCount?: number;        // set by grouping stage on flush
   readonly actorIds?: readonly PlayerId[]; // set by grouping stage on flush (first ≤3)
 }
