@@ -681,7 +681,7 @@ export const EN_CATALOG = {
 | LEVEL_UP | `Congratulations! You've reached level 15!` |
 | ITEM_ACQUIRED | `You've acquired the legendary Sword of Azeroth!` |
 | CHALLENGE_COMPLETED | `Challenge complete! You've conquered 'Dragon's Lair'.` |
-| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, same attacker: `Player 'Zed' attacked you 3 more times!` Grouped, several attackers: `You're under attack by Player 'Zed' and 2 others!` |
+| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, one attacker who also sent the delivered first attack: `Player 'Zed' attacked you 3 more times!`. Grouped, one attacker who is new: `Player 'Kael' attacked you 3 times!` Grouped, several attackers: `You're under attack by Player 'Zed' and 2 others!` |
 | PVP_DEFEATED / VICTORY | `You were defeated by Player 'Zed'.` / `You defeated Player 'Mira'!` |
 | FRIEND_REQUEST | `Player 'Kael' has sent you a friend request.` |
 | FRIEND_ACCEPTED | `Player 'Aria' accepted your friend request.` |
@@ -1169,7 +1169,7 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | Cookies | `@fastify/cookie` | 10-line parser | Read-only use |
 | Stream auth | Cookie | Bearer, `?token=` (stream only), or cookie | Per-tab sessions: two tabs can be two players |
 | Synthetic players | — | `SYNTHETIC_PLAYERS=n` env | Load testing with n distinct recipients |
-| PvP grouped text | "and N others" | Distinct attackers → "and N others"; same attacker → "attacked you N more times" | The digest follows an already-delivered first notification |
+| PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
 | NFR-3 memory | < 300 MB @ 10k | 382 MB @ 10k (p99 27 ms) | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
 **Test inventory:** 134 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Core line coverage is ≈ 98%.

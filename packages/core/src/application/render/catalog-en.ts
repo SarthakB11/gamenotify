@@ -70,9 +70,12 @@ export const EN_CATALOG = Object.freeze({
     const count = input.intent.groupCount ?? 1;
     const distinct = input.intent.distinctActors ?? 1;
     if (count > 1 && distinct === 1) {
+      const lead = leadActor(input);
+      // "more times" is only true if the attacker also triggered the already-delivered first notification.
+      const repeat = lead !== undefined && lead === input.intent.leadingActorId;
       return {
         title: 'Under Attack!',
-        message: `${quoted(input, leadActor(input))} attacked you ${count} more ${plural(count, 'time', 'times')}!`,
+        message: `${quoted(input, lead)} attacked you ${count}${repeat ? ' more' : ''} ${plural(count, 'time', 'times')}!`,
       };
     }
     return { title: 'Under Attack!', message: `You're under attack by ${actorPhrase(input)}!` };

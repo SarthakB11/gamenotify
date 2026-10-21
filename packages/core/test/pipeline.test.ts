@@ -147,6 +147,14 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(g.openGroups).toBe(0);
   });
 
+  it('records the actor of the leading edge so digests can tell repeat attackers from new ones', () => {
+    const { g, clock, scheduler, flushed } = make();
+    g.offer(ctxFor('PVP_ATTACKED', clock.now(), 5, 'v'));
+    for (let i = 0; i < 3; i++) g.offer(ctxFor('PVP_ATTACKED', clock.now(), 3, 'v'));
+    scheduler.advance(2_000);
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 3, actorIds: [3], distinctActors: 1, leadingActorId: 5 });
+  });
+
   it('a single held intent is emitted as-is', () => {
     const { g, clock, scheduler, flushed } = make();
     g.offer(ctxFor('NEW_FOLLOWER', 0, 2, 'k'));

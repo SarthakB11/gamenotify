@@ -64,8 +64,12 @@ describe('message catalog (exact strings)', () => {
     expect(msg({ type: 'NEW_FOLLOWER', actorIds: [PlayerId(3)], distinctActors: 4, groupCount: 4 })).toBe(
       "Player 'Kael' and 3 others started following you.",
     );
-    expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(5)], distinctActors: 1, groupCount: 3 })).toBe(
+    expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(5)], distinctActors: 1, groupCount: 3, leadingActorId: PlayerId(5) })).toBe(
       "Player 'Zed' attacked you 3 more times!",
+    );
+    // A different attacker than the delivered first notification must not get "more".
+    expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(3)], distinctActors: 1, groupCount: 3, leadingActorId: PlayerId(5) })).toBe(
+      "Player 'Kael' attacked you 3 times!",
     );
     expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(5), PlayerId(6)], distinctActors: 3, groupCount: 3 })).toBe(
       "You're under attack by Player 'Zed' and 2 others!",

@@ -22,4 +22,6 @@ export interface NotificationIntent {
   readonly actorIds?: readonly PlayerId[];
   /** Set by the grouping stage: number of distinct actors in the group. */
   readonly distinctActors?: number;
+  /** Set by the grouping stage: the actor of the leading-edge event that was already delivered. */
+  readonly leadingActorId?: PlayerId;
 }

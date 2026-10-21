@@ -13,6 +13,7 @@ export interface GroupingOptions {
 
 interface Group {
   readonly openedAt: number;
+  readonly leadingActorId: PlayerId | undefined;
   windowEnd: number;
   held: number;
   readonly actors: PlayerId[];
@@ -68,6 +69,7 @@ export class GroupingStage {
     if (g === undefined) {
       this.#groups.set(key, {
         openedAt: now,
+        leadingActorId: intent.actorId,
         windowEnd: now + this.#windowMs,
         held: 0,
         actors: [],
@@ -114,7 +116,9 @@ export class GroupingStage {
     const out: NotificationIntent =
       g.held === 1
         ? g.last
-        : { ...g.last, groupCount: g.held, actorIds: [...g.actors], distinctActors: Math.max(1, g.distinct.size) };
+        : { ...g.last, groupCount: g.held, actorIds: [...g.actors], distinctActors: Math.max(1, g.distinct.size),
+            ...(g.leadingActorId !== undefined ? { leadingActorId: g.leadingActorId } : {}),
+          };
     this.#onFlush(out, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
   }
 }
