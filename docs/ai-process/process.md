@@ -78,7 +78,7 @@ See [research.md](./research.md). The highlights that changed the design:
 - **Platform state in Oct 2026:**
   - Node 24 is LTS, and 26 reaches LTS later this month.
   - TypeScript 7 (native) shipped in Aug 2026, but typescript-eslint and dependency-cruiser can't use it yet.
-  - Fastify outperforms Express by about 3×.
+  - Fastify outperforms Express by about 2–3×.
   - MediatR and MassTransit went commercial in 2025.
 
 ## 4. Design

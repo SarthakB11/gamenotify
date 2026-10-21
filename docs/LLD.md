@@ -885,7 +885,7 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 | `POST /v1/events` | `x-internal-key` | `PlatformEvent` (`eventId` optional → generated) | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Ingestion for real producers. Every player id in the event must exist in the directory, checked before publishing, so unknown ids cannot create inbox logs. The key is compared in constant time |
 | `POST /v1/dev/simulate` | none (dev only) | `{ action: "playerLeveledUp", args: [1, 15], repeat? }` | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Calls `GameEngine`/`SocialSystem` with the brief's exact signatures; drives the web demo |
 | `GET /v1/players` | none | — | seeded players | For the demo's player picker |
-| `GET /v1/admin/dlq` | `x-internal-key` | `?limit` | `DeadLetter[]` | |
+| `GET /v1/admin/dlq` | `x-internal-key` | — | `DeadLetter[]` | Most recent 100 entries (fixed) |
 | `GET /healthz` · `/readyz` · `/metrics` | none | — | `200` / Prometheus text | `readyz` = 503 while draining |
 
 ### 6.5 Dev authentication — `apps/server/src/auth/`
