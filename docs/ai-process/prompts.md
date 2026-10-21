@@ -1,31 +1,34 @@
 # Prompts
 
-The prompts that drove the build, verbatim where they came from the developer. The AI's working prompts are summarised. The last section lists reusable patterns.
+The prompts that drove the build. Prompts marked verbatim are unedited; the session 2 prompt is condensed. The AI's working prompts are summarised. The last section lists reusable patterns.
 
 ## 1. Kick-off (developer → Claude, Cowork)
 
-> You have to build this project brief. Do it as a complete professional following all software patterns and latest methods of optimization in speed and time.
+Prompt (lightly edited):
+
+> You have to build the project described in the brief. Do it as a complete professional following all software patterns and latest methods of optimization in speed and time.
 >
-> Get the brief, understand it, research deeply about every aspect and the best methods/tools then ask me questions for closing gaps in product understanding.
+> The brief is a PDF. Read it, understand it, research deeply about every aspect and the best methods/tools then ask me questions for closing gaps in product understanding.
 >
 > We have to build a high level design document and a low level design document.
 
 **What the AI did with it:**
 
-1. Took the project brief (PDF) as input.
-2. Extracted the PDF and read the text plus page renders.
-3. Researched (see research.md), then asked round 1 of the questions.
+1. Extracted the PDF and read the text plus page renders.
+2. Researched (see research.md), then asked round 1 of the questions.
 
 ## 2. Stack question → answer
 
 > **Q:** Which language/stack should we build it in?
-> **A:** "See the reference full-stack job posting and find what you have to."
+> **A:** (condensed) Look at a reference full-stack developer job posting and derive the stack from it.
 
-The AI found the posting (TypeScript, React/Next.js, Node.js/Express, Python, PostgreSQL, AWS, Docker/K8s, GitHub Actions) and locked in TypeScript / Node 24 / Fastify / SSE / React.
+The AI read the posting (TypeScript, React/Next.js, Node.js/Express, Python, PostgreSQL, AWS, Docker/K8s, GitHub Actions) and locked in TypeScript / Node 24 / Fastify / SSE / React.
 
 ## 3. Continue + package
 
-> Ask the questions to me, pack everything in a zip because I will continue in Claude Code to push it to the repo. Also give me prompt to do that. Continue from where you left off.
+Prompt (condensed):
+
+> Ask me the questions, package everything in a zip for a follow-up Claude Code session, and give me the prompt for it. Continue from where you left off.
 
 The AI asked round 2 (rarity, PvP, muted behaviour, grouping), then built, verified and packaged the repo.
 
@@ -51,80 +54,53 @@ The AI asked round 2 (rarity, PvP, muted behaviour, grouping), then built, verif
 
 ## 6. Session 2: Claude Code (repository push)
 
-The project zip from session 1 was attached to a Claude Code session (claude.ai/code) running against the empty GitHub repo. The prompt, verbatim (the attachment path is shortened):
+The project archive from session 1 was attached to a Claude Code session (claude.ai/code) running against an empty repository. Prompt (condensed; environment details omitted):
 
 ````text
-@gamenotify.zip You're in my public GitHub repo for GameNotify (a real-time notification
-system for a gaming platform). The repo root contains `gamenotify.zip` (or I attached it to
-this message). The zip holds the complete, already-verified project with files at the top level:
-package.json, pnpm-lock.yaml, apps/, packages/, docs/, scripts/, test/, CLAUDE.md, README.md and so on.
+You're in an empty repository for a real-time notification system for a gaming platform. The attached
+archive holds the complete, already-verified project (package.json, pnpm-lock.yaml, apps/, packages/,
+docs/, scripts/, test/, CLAUDE.md, README.md).
 
-GOAL: turn the zip into the repository's contents, re-verify it, and push a clean, reviewable commit
-history to `main`. Do NOT change application behaviour, user-facing messages, tests or the golden file,
+GOAL: turn the archive into the repository's contents, re-verify it, and push a clean, reviewable
+commit history. Do NOT change application behaviour, user-facing messages, tests or the golden file,
 unless a check fails and a minimal fix is required. If that happens, explain each fix.
 
-1. Unpack
-   - Unzip `gamenotify.zip` into the repo root (overwrite nothing else; the repo is otherwise empty).
-   - Remove the zip from the working tree (`git rm` it if it was committed).
-   - Read CLAUDE.md and follow it for the rest of the session.
+1. Unpack the archive into the repo root and remove the archive from the working tree.
+   Read CLAUDE.md and follow it for the rest of the session.
 
-2. Environment
-   - Need Node.js >= 24 (22.18+ also works, with engine warnings) and pnpm 10.
-   - Run `corepack enable` (or `npm i -g pnpm@10.28.0`), then `pnpm install --frozen-lockfile`.
+2. Environment: Node.js >= 24 (22.18+ also works, with engine warnings) and pnpm 10.
+   Install with `pnpm install --frozen-lockfile`.
 
 3. Verify (all must pass before committing)
-   - `pnpm verify`. Expect:
-     - Biome clean
-     - typecheck clean
-     - 134 tests passing
-     - 8 architecture tests passing
-     - build OK
-     - "demo output matches golden file ✔"
+   - `pnpm verify`. Expect: Biome clean, typecheck clean, 134 tests passing, 8 architecture tests
+     passing, build OK, "demo output matches golden file".
    - `pnpm demo`. Show me the first 12 lines: the brief's four example triggers and their messages.
-   - Optional: `pnpm bench` (should print "✔ performance budgets met").
+   - Optional: `pnpm bench` (should print "performance budgets met").
 
-4. Commit in logical steps (Conventional Commits; no node_modules/dist/coverage — .gitignore handles it):
-   a. `docs: requirements, HLD, LLD, ADRs and AI-process record`     → docs/, README.md, CLAUDE.md
-   b. `build: pnpm monorepo with TypeScript 7, Biome and Vitest`        → root configs, lockfile, .nvmrc, .env.example
-   c. `feat(core): domain, ports, event bus, notification pipeline, adapters, simulators` → packages/core (src + tests)
-   d. `feat(server): Fastify SSE gateway, REST API, dev auth, metrics`  → apps/server
-   e. `feat(demo): console walkthrough of the brief's triggers + golden test` → apps/demo, test/golden, scripts/check-golden.ts
-   f. `feat(web): React live-notifications client`                      → apps/web
-   g. `ci: GitHub Actions, Docker image, benchmark and SSE load scripts` → .github/, Dockerfile, docker-compose.yml, .dockerignore, scripts/bench.ts, scripts/load-sse.ts
-   h. `chore: remove upload archive` (only if the zip had been committed)
+4. Commit in logical steps using Conventional Commits (no node_modules/dist/coverage):
+   a. docs: requirements, HLD, LLD, ADRs and AI-process record
+   b. build: pnpm monorepo with TypeScript 7, Biome and Vitest
+   c. feat(core): domain, ports, event bus, notification pipeline, adapters, simulators
+   d. feat(server): Fastify SSE gateway, REST API, dev auth, metrics
+   e. feat(demo): console walkthrough of the brief's triggers + golden test
+   f. feat(web): React live-notifications client
+   g. ci: GitHub Actions, Docker image, benchmark and SSE load scripts
 
-5. Record this session (the AI process is part of the deliverable)
-   - Append a section "## 6. Session 2: Claude Code (repository push)" to docs/ai-process/prompts.md.
-   - Paste this prompt verbatim in it, plus 3–5 bullets on what you did, what you verified (with numbers)
-     and any fixes.
-   - Also add one row to the tools list in docs/ai-process/README.md if needed.
+5. Record this session (the process itself is part of the deliverable)
+   - Append a section "## 6. Session 2: Claude Code (repository push)" to docs/ai-process/prompts.md
+     with this prompt, plus 3-5 bullets on what you did, what you verified (with numbers) and any fixes.
    - Commit as `docs(ai-process): record Claude Code push session`.
 
-6. Push to `main`. If this environment can only push to a feature branch, push the branch, open a PR
-   into `main` titled "GameNotify: real-time notification system", and give me the link
-   so I can merge it.
+6. Push. If this environment can only push to a feature branch, push the branch and open a PR.
 
-7. CI
-   - Watch the GitHub Actions run (`gh run watch` or `gh run list`). Jobs:
-     - verify on Node 24 and 26
-     - performance budgets
-     - docker image
-   - If a job fails for an environment reason (runner differences, action versions), make the smallest
-     fix, push, and re-check. Never loosen test assertions or performance budgets to make CI pass;
-     ask me first.
+7. CI: watch the GitHub Actions run (verify on Node 24 and 26, performance budgets, docker image).
+   If a job fails for an environment reason, make the smallest fix, push, and re-check.
+   Never loosen test assertions or performance budgets to make CI pass; ask me first.
 
-8. Final reply to me:
-   - the repo URL and the default-branch commit list
-   - CI status per job
-   - the `pnpm demo` excerpt
-   - any fixes you made and why
-   - the exact local run commands for the reviewer: `pnpm install && pnpm build && pnpm start` (open
-     http://localhost:3000), `pnpm demo`, or `docker compose up --build`.
+8. Final reply: the commit list, CI status per job, the `pnpm demo` excerpt, any fixes and why, and
+   the exact local run commands for a reviewer.
 
-Do NOT:
-- add secrets or tokens to the repo
-- rewrite the design docs beyond the ai-process note above
-
+Do NOT add secrets or tokens to the repo, and do not rewrite the design docs beyond the ai-process note.
 ````
 
 **What the AI did:**

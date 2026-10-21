@@ -1,4 +1,4 @@
-# Process: from a PDF in an inbox to a verified, running system
+# Process: from a PDF brief to a verified, running system
 
 The workflow is **spec-driven**: requirements → questions → research → HLD → LLD → tests → code → measurement. AI did most of the typing. Every step had a **human decision point** and a **machine-checkable gate**.
 
@@ -17,8 +17,8 @@ flowchart LR
 
 ## 1. Requirements extraction
 
-- **Input:** the project brief (PDF).
-- The AI extracted the text with `pdftotext`, and **rendered the pages as images**. Checking the images confirmed that nothing in the PDF was image-only (see the missing `Notification` class below).
+- **Input:** the project brief, a PDF spec.
+- The AI extracted the text with `pdftotext` and **rendered the pages as images**. Checking the images confirmed that nothing in the PDF was image-only (see the missing `Notification` class below).
 - **Output:** traceable requirement IDs (FR-1…FR-16, NFR-1…NFR-9) in `docs/HLD.md §2`. Every FR is later mapped to code and tests in `docs/LLD.md §14`.
 
 ## 2. Gap analysis → clarifying questions (human in the loop)
@@ -29,7 +29,7 @@ The AI surfaced the gaps instead of guessing. Each was asked as a multiple-choic
 
 | Gap | Question | Answer |
 |---|---|---|
-| No language specified; the API is camelCase | Which stack? | "See the reference full-stack job posting." Research found TypeScript / Node / React, so **TypeScript** |
+| No language specified; the API is camelCase | Which stack? | The developer pointed the AI to a reference full-stack job posting. The AI derived TypeScript / Node / React from it, so **TypeScript** |
 | "You are provided with a Notification class", but it is absent from the PDF | How to handle it? | **Define it ourselves** and document the assumption |
 | "Don't build beyond what is asked" vs "complete professional" | Scope? | **Core + live gateway** (SSE + tiny React client), one process |
 | Optional extras | Which? | **PvP, per-type preferences, offline inbox + replay, dedup / rate limit / grouping**, all of them, built *after* the core is green |
@@ -42,6 +42,20 @@ The AI surfaced the gaps instead of guessing. Each was asked as a multiple-choic
 | Who is told about a PvP defeat? | Both players |
 | What happens to muted or rate-limited notifications? | Stored silently, never dropped |
 | How should bursts be grouped? | First immediately, the rest as a digest |
+
+### Decisions the developer made
+
+The AI proposed options and defaults. These choices were the developer's, taken from the answers above:
+
+- **Stack:** pointed the AI to a reference full-stack job posting to decide from, then went with the TypeScript / Node / React result.
+- **The missing `Notification` class:** chose to define it in the project and document the assumption, rather than guess at the original.
+- **Scope:** chose core plus a live gateway (SSE and a small React client) in one process.
+- **Extras:** chose all four (PvP, per-type preferences, offline inbox with replay, dedup / rate limit / grouping), to be built only after the core was green.
+- **Product semantics:** "rare or valuable" means rare and above; both players are told about a PvP defeat; muted or rate-limited notifications are stored silently and never dropped; bursts are grouped as first immediately, the rest as a digest.
+- **Demo video:** chose to record the real running system rather than a mock-up (session 3).
+- **Budgets:** set the rule that test assertions and performance budgets are never loosened to make CI pass; the AI must ask first (session 2 prompt).
+
+**On "don't build beyond what is asked".** The brief says not to build beyond what is asked, but also welcomes additional features after the core is complete. The reasoning was that the core had to be finished and verified first, so the extras were built only after it was green.
 
 ## 3. Research (before design, not after)
 
