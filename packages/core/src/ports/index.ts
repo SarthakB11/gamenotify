@@ -125,6 +125,8 @@ export interface InboxRepository {
   /** Newest-first page of entries with seq < beforeSeq (or the newest when null). */
   page(player: PlayerId, beforeSeq: number | null, limit: number): readonly InboxEntry[];
   find(player: PlayerId, id: NotificationId): InboxEntry | undefined;
+  /** Records the first successful push; returns the updated entry, or undefined if it is no longer retained. */
+  markDelivered(player: PlayerId, seq: number, at: number): InboxEntry | undefined;
   markRead(player: PlayerId, id: NotificationId, at: number): boolean;
   markAllRead(player: PlayerId, upToSeq: number, at: number): number;
   unreadCount(player: PlayerId): number;

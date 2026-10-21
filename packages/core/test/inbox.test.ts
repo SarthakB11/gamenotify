@@ -128,3 +128,20 @@ describe('InMemoryInbox', () => {
     expect(inbox.page(PlayerId(1), null, 1000).map((e) => e.seq)).toEqual(Array.from({ length: 40 }, (_, i) => 46 - i));
   });
 });
+
+describe('InboxEntry immutability', () => {
+  it('cannot be assigned to; state changes return through the repository as new entries', () => {
+    const { inbox } = make();
+    const a = inbox.append(note(1), 'LIVE');
+    // @ts-expect-error readAt is readonly
+    const assign = (): void => void (a.readAt = 1);
+    void assign;
+    const delivered = inbox.markDelivered(PlayerId(1), a.seq, 7);
+    expect(delivered).toMatchObject({ seq: a.seq, deliveredAt: 7, readAt: null });
+    expect(a.deliveredAt).toBeNull();
+    inbox.markRead(PlayerId(1), a.notification.id, 9);
+    expect(delivered?.readAt).toBeNull();
+    expect(inbox.find(PlayerId(1), a.notification.id)).toMatchObject({ deliveredAt: 7, readAt: 9 });
+    expect(inbox.markDelivered(PlayerId(1), 99, 1)).toBeUndefined();
+  });
+});

@@ -4,6 +4,7 @@ import type {
   DeadLetterQueue,
   DeliveryChannel,
   DeliveryResult,
+  InboxRepository,
   Logger,
   Metrics,
   PreferenceRepository,
@@ -15,6 +16,8 @@ export interface DeliveryRouterDeps {
   readonly retry: RetryPolicy;
   readonly dlq: DeadLetterQueue;
   readonly prefs: PreferenceRepository;
+  /** Receives `markDelivered` when a channel pushed the entry; entries themselves are immutable. */
+  readonly inbox: InboxRepository;
   readonly clock: Clock;
   readonly metrics: Metrics;
   readonly logger: Logger;
@@ -62,7 +65,12 @@ export class DeliveryRouter {
     if (result instanceof Promise) return this.#withRetry(channel, entry, 1, result);
     if (result === 'FAILED') return this.#withRetry(channel, entry, 1, result);
     this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result });
+    this.#markDelivered(entry, result);
     return undefined;
+  }
+
+  #markDelivered(entry: InboxEntry, result: DeliveryResult): void {
+    if (result === 'DELIVERED') this.#d.inbox.markDelivered(entry.notification.recipientId, entry.seq, this.#d.clock.now());
   }
 
   async #withRetry(
@@ -81,7 +89,10 @@ export class DeliveryRouter {
         error = e instanceof Error ? e.message : String(e);
       }
       this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result });
-      if (result !== 'FAILED') return;
+      if (result !== 'FAILED') {
+        this.#markDelivered(entry, result);
+        return;
+      }
       if (attempt >= this.#d.retry.maxAttempts) {
         this.#d.dlq.put({ entry, channel: channel.name, attempts: attempt, at: this.#d.clock.now(), error });
         this.#d.metrics.gauge('dlq_size', this.#d.dlq.size);

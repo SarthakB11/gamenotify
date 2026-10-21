@@ -49,6 +49,12 @@ class PlayerLog {
     return this.ring[(this.head + (seq - this.firstSeq)) % this.ring.length];
   }
 
+  /** Entries are immutable: a state change swaps the stored object (same seq, same slot). */
+  replace(seq: number, entry: InboxEntry): void {
+    this.ring[(this.head + (seq - this.firstSeq)) % this.ring.length] = entry;
+    this.byId.set(entry.notification.id, entry);
+  }
+
   dropOldest(): void {
     const e = this.ring[this.head];
     if (e !== undefined) {
@@ -125,10 +131,20 @@ export class InMemoryInbox implements InboxRepository {
     const e = log?.byId.get(id);
     if (log === undefined || e === undefined) return false;
     if (e.readAt === null) {
-      e.readAt = at;
+      log.replace(e.seq, { ...e, readAt: at });
       log.unread--;
     }
     return true;
+  }
+
+  markDelivered(player: PlayerId, seq: number, at: number): InboxEntry | undefined {
+    const log = this.#log(player, false);
+    const e = log?.at(seq);
+    if (log === undefined || e === undefined) return undefined;
+    if (e.deliveredAt !== null) return e;
+    const next: InboxEntry = { ...e, deliveredAt: at };
+    log.replace(seq, next);
+    return next;
   }
 
   markAllRead(player: PlayerId, upToSeq: number, at: number): number {
@@ -138,7 +154,7 @@ export class InMemoryInbox implements InboxRepository {
     for (let seq = log.firstSeq; seq <= Math.min(upToSeq, log.nextSeq - 1); seq++) {
       const e = log.at(seq);
       if (e !== undefined && e.readAt === null) {
-        e.readAt = at;
+        log.replace(seq, { ...e, readAt: at });
         marked++;
       }
     }

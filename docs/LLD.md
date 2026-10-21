@@ -289,12 +289,12 @@ export interface InboxEntry {
   readonly seq: number;                // per-player, strictly increasing, starts at 1
   readonly notification: Notification;
   readonly mode: DeliveryMode;         // LIVE | SILENT
-  deliveredAt: number | null;          // mutated only by InboxService
-  readAt: number | null;               // mutated only by InboxService
+  readonly deliveredAt: number | null; // set via InboxRepository.markDelivered
+  readonly readAt: number | null;      // set via InboxRepository.markRead / markAllRead
 }
 ```
 
-> Implementation note: `deliveredAt` and `readAt` are the only mutable fields, and only `InboxService` changes them. Everything else is frozen.
+> Implementation note: entries are immutable. `InMemoryInbox` applies `markDelivered`, `markRead` and `markAllRead` by replacing the stored entry with a copy (same seq, same slot). Callers holding the old object see the old state, so the SSE frame cache, which is keyed by entry object plus read state, can never serve a stale frame.
 
 ### 3.8 Results and suppression reasons — `domain/result.ts`
 
@@ -362,6 +362,7 @@ export interface InboxRepository {
   append(n: Notification, mode: DeliveryMode): InboxEntry;   // assigns seq
   since(player: PlayerId, afterSeq: number, limit: number): SinceResult;
   page(player: PlayerId, beforeSeq: number | null, limit: number): readonly InboxEntry[];
+  markDelivered(player: PlayerId, seq: number, at: number): InboxEntry | undefined;
   markRead(player: PlayerId, id: NotificationId, at: number): boolean;
   markAllRead(player: PlayerId, upToSeq: number, at: number): number;
   unreadCount(player: PlayerId): number;
@@ -862,7 +863,7 @@ write(frame: string): void {
 **`SseNotificationSender.send(entry)`:**
 
 - `conns = registry.get(recipientId)`. If there are none, return `RECIPIENT_OFFLINE`.
-- Otherwise build the frame once, then `conns.forEach(c => c.write(frame))`, set `entry.deliveredAt = now`, and return `DELIVERED`.
+- Otherwise build the frame once, then `conns.forEach(c => c.write(frame))`, and return `DELIVERED`. The `DeliveryRouter` then records the push with `inbox.markDelivered(recipientId, seq, now)`; the sender never touches the entry.
 
 It is synchronous apart from the `Promise` wrapper, which is what keeps live delivery ordered (§5.2).
 

@@ -6,6 +6,7 @@ import {
   InAppChannel,
   type InboxEntry,
   InMemoryDeadLetterQueue,
+  InMemoryInbox,
   InMemoryPreferenceRepository,
   Notification,
   NotificationId,
@@ -29,6 +30,8 @@ const entry = (): InboxEntry => ({
 });
 
 const make = (sender: RecordingSender) => {
+  const clock = new FakeClock(5);
+  const inbox = new InMemoryInbox({ capacity: 10, ttlMs: 1e9, clock });
   const metrics = new MemoryMetrics();
   const dlq = new InMemoryDeadLetterQueue(2);
   const sleeps: number[] = [];
@@ -37,15 +40,25 @@ const make = (sender: RecordingSender) => {
     retry: exponentialBackoff({ maxAttempts: 3, baseMs: 50, capMs: 2_000 }, () => 0.5),
     dlq,
     prefs: new InMemoryPreferenceRepository(),
-    clock: new FakeClock(0),
+    inbox,
+    clock,
     metrics,
     logger: new MemoryLogger(),
     sleep: async (ms) => void sleeps.push(ms),
   });
-  return { router, metrics, dlq, sleeps };
+  return { router, metrics, dlq, sleeps, inbox };
 };
 
 describe('DeliveryRouter', () => {
+  it('records delivery through the inbox port, leaving the entry it was given untouched', async () => {
+    const sender = new RecordingSender();
+    const { router, inbox } = make(sender);
+    const stored = inbox.append(entry().notification, 'LIVE');
+    await router.deliver(stored);
+    expect(stored.deliveredAt).toBeNull();
+    expect(inbox.since(PlayerId(1), 0, 10)).toMatchObject({ entries: [{ seq: 1, deliveredAt: 5 }] });
+  });
+
   it('delivers once on success', async () => {
     const sender = new RecordingSender();
     const { router, metrics } = make(sender);

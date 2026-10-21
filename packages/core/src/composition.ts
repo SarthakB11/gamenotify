@@ -125,6 +125,7 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
     retry: exponentialBackoff(cfg.retry),
     dlq,
     prefs,
+    inbox,
     clock,
     metrics,
     logger,

@@ -6,8 +6,8 @@ export interface InboxEntry {
   readonly seq: number;
   readonly notification: Notification;
   readonly mode: DeliveryMode;
-  deliveredAt: number | null;
-  readAt: number | null;
+  readonly deliveredAt: number | null;
+  readonly readAt: number | null;
 }
 
 export interface InboxEntryDto {

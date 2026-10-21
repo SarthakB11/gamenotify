@@ -78,12 +78,10 @@ export class SseNotificationSender implements NotificationSender {
   readonly name = 'sse';
   readonly #registry: ConnectionRegistry;
   readonly #epoch: string;
-  readonly #now: () => number;
 
-  constructor(registry: ConnectionRegistry, epoch: string, now: () => number = Date.now) {
+  constructor(registry: ConnectionRegistry, epoch: string) {
     this.#registry = registry;
     this.#epoch = epoch;
-    this.#now = now;
   }
 
   send(entry: InboxEntry): DeliveryResult {
@@ -91,7 +89,6 @@ export class SseNotificationSender implements NotificationSender {
     if (conns === undefined || conns.size === 0) return 'RECIPIENT_OFFLINE';
     const frame = notificationFrame(this.#epoch, entry);
     for (const c of conns) c.deliver(entry.seq, frame);
-    entry.deliveredAt = this.#now();
     return 'DELIVERED';
   }
 }
