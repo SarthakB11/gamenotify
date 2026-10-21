@@ -157,7 +157,7 @@ flowchart LR
 ```
 
 - **Hexagonal core.** `packages/core` has **zero npm dependencies** and no HTTP or file I/O. Everything external (sender, clock, IDs, storage, logger, metrics) is a port. An architecture test fails the build if a layer boundary is crossed.
-- **Reject early, render late.** Filters run on a cheap *intent*. Only surviving intents are rendered into a `Notification`. A suppressed event costs about **1.4 µs**, against **5.4 µs** for one that is fully rendered, stored and sent (`pnpm bench`).
+- **Reject early, render late.** Filters run on a cheap *intent*. Only surviving intents are rendered into a `Notification`. A suppressed event costs about **1.2 µs**, against **4.9 µs** for one that is fully rendered, stored and sent (`pnpm bench`, 2026-10-21, Linux x64 (WSL2), i7-12650H, Node 24.22.1).
 - **Why SSE rather than WebSockets:** notifications only flow server → client. SSE gives automatic reconnect plus `Last-Event-ID` replay for free over plain HTTP (proxy- and HTTP/2-friendly). Client → server actions use REST. A WebSocket adapter would slot in behind the same `NotificationSender` port.
 
 Full design: **[docs/HLD.md](docs/HLD.md)** (high level) · **[docs/LLD.md](docs/LLD.md)** (classes, algorithms, APIs, tests) · **[docs/adr/](docs/adr)** (decision records).
@@ -209,13 +209,15 @@ Errors use RFC 9457 Problem Details. Configuration is done with env vars (see `.
 
 ---
 
-## Measured (this machine: 2-vCPU Xeon @ 2.1 GHz, Node 24.22)
+## Measured
+
+Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on Linux x64 (WSL2), i7-12650H, Node 24.22.1. The two SSE rows come from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
 
 | What | Result |
 |---|---|
-| `dispatcher.handle` (full path) | 5.4 µs avg · p99 ≈ 21 µs |
-| Suppressed event (render skipped) | 1.4 µs avg |
-| End-to-end through the bus | ≈ 128k events/s |
+| `dispatcher.handle` (full path) | 4.9 µs avg · p99 ≈ 25 µs |
+| Suppressed event (render skipped) | 1.2 µs avg |
+| End-to-end through the bus | ≈ 183k events/s |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
 | Tests | 163 passing · core line coverage ≈ 98% |

@@ -66,7 +66,7 @@ The brief asks us to focus on the core logic: **receive events → decide the no
 |---|---|---|---|
 | NFR-1 | Latency | Event → `send()` p99 **< 1 ms** in process (grouping windows excluded) | `mitata` micro-benchmark in CI |
 | NFR-2 | Throughput | ≥ **50k events/s** on one core (recording sender, no network I/O) | Benchmark (`pnpm bench`, gated in CI) |
-| NFR-3 | Fan-out | ≥ **10k** concurrent SSE connections per process, ≤ 400 MB RSS. Measured: 382 MB, p99 27 ms (initial 300 MB target missed and revised) | Load script (`scripts/load-sse.ts`), run manually at 10k; not asserted in CI |
+| NFR-3 | Fan-out | ≥ **10k** concurrent SSE connections per process, ≤ 300 MB RSS. Measured: 382 MB, p99 27 ms. **The target was missed**; it was not met and has not been raised | Load script (`scripts/load-sse.ts`), run manually at 10k; not asserted in CI |
 | NFR-4 | Bounded memory | Every queue, cache and buffer has a hard capacity and an overflow policy. The inbox is bounded by the per-player cap (200 entries) times the number of known players; ring buffers grow on demand up to that cap, so quiet players cost a few slots, not the full cap | Unit tests + code review checklist |
 | NFR-5 | Reliability | At-least-once into the inbox. Duplicates suppressed by idempotency key. Per-recipient ordering preserved | Property tests (`fast-check`) |
 | NFR-6 | Maintainability | Core has **zero** framework imports. Layer rules are enforced by tooling | Architecture test in CI (ADR-008) |
@@ -318,17 +318,17 @@ Node runs JavaScript on one thread. The work is to **keep the event loop free**,
 8. **No sync I/O, no `JSON.parse` on the hot path**, and lazy logging (`pino` level guards).
 9. **Measured, not assumed.** `mitata` benchmarks with budgets fail CI on regression. The SSE load script reports p50/p99 and RSS.
 
-**Measured results (v1.0, 2-vCPU Xeon @ 2.1 GHz, Node 24.22):**
+**Measured results.** The first three rows are from `pnpm bench` on 2026-10-21 (Linux x64 (WSL2), i7-12650H, Node 24.22.1). The two SSE rows are from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
 
 | Metric | Result |
 |---|---|
-| Full path, per event | 5.4 µs avg, p99 ≈ 21 µs |
-| Suppressed path (render skipped) | 1.4 µs |
-| End to end through the bus | ≈ 128k events/s |
+| Full path, per event | 4.9 µs avg, p99 ≈ 25 µs |
+| Suppressed path (render skipped) | 1.2 µs |
+| End to end through the bus | ≈ 183k events/s |
 | 2k SSE connections @ 1k events/s | p50 7 ms, p99 20 ms, 195 MB RSS |
 | 10k SSE connections @ 2k events/s | p50 9 ms, p99 27 ms, 382 MB RSS |
 
-The first build ran at 76 µs per event. Profiling found V8 Map tombstones in the dedup store; ADR-010 has the fix.
+At the time of the profiling work, the first build ran at 76 µs per event and the fix brought it to 5.4 µs on the Xeon above. Profiling found V8 Map tombstones in the dedup store; ADR-010 has the fix.
 
 ---
 
@@ -422,7 +422,7 @@ The core is built first and is always shippable, so if time runs short, extras a
 | 007 | Disconnect slow consumers instead of dropping frames | Reconnect cost in exchange for no silent loss |
 | 008 | No DI container or mediator library | Manual wiring (about 60 lines) in exchange for zero magic and fast startup |
 | 009 | In-memory adapters behind ports in v1 | Not durable across restarts (handled by resync), but matches the brief's "simple map" |
-| 010 | Hot-path data structures chosen by profiling | Ring-buffer eviction instead of Map head-iteration (V8 tombstones). 76 µs → 5.4 µs per event |
+| 010 | Hot-path data structures chosen by profiling | Ring-buffer eviction instead of Map head-iteration (V8 tombstones). 76 µs → 5.4 µs per event (measured then, on the Xeon) |
 
 Full ADRs live in [`docs/adr/`](./adr/).
 

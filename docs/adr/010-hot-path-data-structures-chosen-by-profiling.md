@@ -12,4 +12,4 @@ The first benchmark showed 76 µs per event and 20k events/s, far off the budget
 - `DeliveryRouter.deliver` returns `undefined` when every channel completes synchronously, so the common in-app path allocates no Promises.
 
 ## Consequences
-Result: 5.4 µs per event, ≈128k events/s end to end (about 6× better). Budgets are enforced by `pnpm bench` in CI. Lesson recorded in `CLAUDE.md`.
+Result at the time of the profiling work (2-vCPU Xeon): 5.4 µs per event, ≈128k events/s end to end (about 6× better than the first build). Current numbers (`pnpm bench`, 2026-10-21, Linux x64 (WSL2), i7-12650H, Node 24.22.1): 4.9 µs per event, ≈183k events/s. Budgets are enforced by `pnpm bench` in CI. Lesson recorded in `CLAUDE.md`.

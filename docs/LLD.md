@@ -1178,6 +1178,6 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | Stream auth | Cookie | Bearer or cookie, plus a short-lived single-use `?ticket=` for the browser | Per-tab sessions: two tabs can be two players; the session token never appears in a URL |
 | Synthetic players | — | `SYNTHETIC_PLAYERS=n` env | Load testing with n distinct recipients |
 | PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
-| NFR-3 memory | < 300 MB @ 10k | 382 MB @ 10k (p99 27 ms) | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
+| NFR-3 memory | ≤ 300 MB @ 10k | 382 MB @ 10k (p99 27 ms): target missed | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
 **Test inventory:** 163 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Core line coverage is ≈ 98%.
