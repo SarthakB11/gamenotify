@@ -204,3 +204,18 @@ Prompts, verbatim:
 
 - `pnpm verify` green: 148 tests in 17 files, 8 architecture tests and the golden demo check.
 - `pnpm bench`: "performance budgets met" (208k events/s through the bus, worst p99 18.8 µs).
+
+**Follow-up prompt, verbatim:**
+
+> fix three minor items too
+
+Two Sonnet workers again ran in parallel worktrees. What was fixed:
+
+- The long-lived session token no longer travels in the SSE URL: the client exchanges it (Bearer header) for a 30-second single-use stream ticket (`POST /v1/stream/ticket`), and reconnects fetch a fresh ticket and resume with `lastEventId`, so replay stays gapless. `?token=` on the stream is rejected.
+- Idempotency no longer loses events: the key is released if dispatch throws before the inbox write, so a producer retry is delivered exactly once and the other recipients of a PvP fan-out still run.
+- `InboxEntry` is immutable. Delivered and read state changes go through the inbox repository port.
+
+**Verification:**
+
+- `pnpm verify` green: 163 tests in 17 files, 8 architecture tests and the golden demo.
+- `pnpm bench`: budgets met (210k events/s, worst p99 19.4 µs).

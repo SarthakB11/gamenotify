@@ -70,7 +70,7 @@ The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and ref
 **Everything CI runs:**
 
 ```bash
-pnpm verify   # lint → typecheck → tests (148) → architecture rules → build → golden demo check
+pnpm verify   # lint → typecheck → tests (163) → architecture rules → build → golden demo check
 pnpm bench    # performance budgets (p99 < 1 ms per event, ≥ 50k events/s)
 pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & RSS
 ```
@@ -178,7 +178,7 @@ Errors use RFC 9457 Problem Details. Configuration is done with env vars (see `.
 | End-to-end through the bus | ≈ 128k events/s |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 148 passing · core line coverage ≈ 98% |
+| Tests | 163 passing · core line coverage ≈ 98% |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 
