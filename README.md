@@ -18,13 +18,15 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 | File | What it does | Brief requirement |
 |---|---|---|
 | [`simulation/simulators.ts`](packages/core/src/simulation/simulators.ts#L24) | `GameEngine` and `SocialSystem` expose the example triggers (`playerLeveledUp`, `itemAcquired`, `friendRequestSent`, `friendRequestAccepted`) | "Example event triggers" |
-| [`application/dispatcher.ts`](packages/core/src/application/dispatcher.ts#L63) | `handle()` receives an event, resolves its type, runs the preference check, creates the notification (`#finish`) and sends it | "Receive event → determine type → check preferences → create → send" |
+| [`application/dispatcher.ts`](packages/core/src/application/dispatcher.ts#L86) | `handle()` receives an event, resolves its type, runs the preference check, creates the notification (`#finish`) and sends it | "Receive event → determine type → check preferences → create → send" |
 | [`application/pipeline/preference-stage.ts`](packages/core/src/application/pipeline/preference-stage.ts#L16) | Reads the player's Game/Social enable/disable map; disabled means nothing is created | "Per-user preferences (simple map)" |
 | [`domain/notification.ts`](packages/core/src/domain/notification.ts#L44) | The immutable `Notification` class (assumption A1) | "`Notification` class" |
 | [`application/render/catalog-en.ts`](packages/core/src/application/render/catalog-en.ts#L53) | The exact message text for every notification type | "Clear, concise messages" |
 | [`application/delivery/in-app-channel.ts`](packages/core/src/application/delivery/in-app-channel.ts#L5) | The in-app channel: hands the notification to the existing client (`NotificationSender`) | "In-app, real-time delivery" |
 
 Run `pnpm demo` to see the brief's four triggers; everything else in the repo is optional extras (below).
+
+The console demo runs the real pipeline on virtual time (`FakeClock` + `ManualScheduler`), so its output, including the grouping window, is deterministic and golden-tested; the server uses the real clock.
 
 ---
 
@@ -132,12 +134,12 @@ The brief welcomes additional features once the core is complete. These were add
 
 | Area | Lines | Brief or extra |
 |---|---|---|
-| `packages/core/src` total (excluding the `testing/` helpers) | 2,855 | core package |
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,851 | core package |
 | of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 377 | extra |
 | of which: delivery router with retry/backoff, retry policy, dead-letter queue | 146 | extra |
-| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,332 | core path and its plumbing |
-| `apps/demo` (console demo) | 116 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,245 | extra |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,328 | core path and its plumbing |
+| `apps/demo` (console demo) | 120 | brief |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,252 | extra |
 | `apps/web/src` (React client) | 570 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
 | `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
@@ -147,7 +149,7 @@ The extra stages are registered in one place, [`packages/core/src/composition.ts
 - line 109: `IdempotencyStage` joins `PreferenceStage` in `stages`
 - lines 111 to 119: `RateLimitStage` (with `TokenBucketLimiter`) forms `emissionStages`
 - line 120: `GroupingStage` is created and passed to the dispatcher
-- lines 122 to 125: dead-letter queue and `exponentialBackoff` retry are passed to `DeliveryRouter`
+- lines 122 to 126: dead-letter queue and `exponentialBackoff` retry are passed to `DeliveryRouter`
 
 Reading the code (not by deleting it): the dispatcher takes `stages` and `emissionStages` as plain arrays, so removing the first two leaves the receive, resolve, preference check, render, store, send flow intact. Grouping and the delivery router are not optional stages. The dispatcher calls `grouping.offer()` unconditionally (it passes through events that carry no group key), and `DeliveryRouter` always wraps `InAppChannel`, so removing those means editing the dispatcher or router, not just the wiring. Quiet hours live inside `PreferenceStage` itself.
 

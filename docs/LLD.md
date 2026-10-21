@@ -1074,7 +1074,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 
 ## 13. Demo script — `apps/demo/src/main.ts` (actual output)
 
-Run with `NO_COLOR=1 DEMO_GROUP_WINDOW_MS=300`. This is the golden file `test/golden/demo.txt`, asserted in CI:
+Run with `NO_COLOR=1 DEMO_GROUP_WINDOW_MS=300`. This is the golden file `test/golden/demo.txt`, asserted in CI: The demo runs the real pipeline on virtual time (`FakeClock` + `ManualScheduler`), so its output, including the grouping window, is deterministic; the server uses the real clock.
 
 ```
 === GameNotify — demo ===

@@ -269,3 +269,28 @@ Prompts, verbatim:
 
 - `pnpm verify` green three times in a row: 178 tests, 8 architecture tests and the golden demo.
 - `pnpm bench`: budgets met (~198k events/s through the bus, worst p99 13.8 µs).
+
+## 12. Session 8: Claude Code (fifth review, final polish)
+
+Prompts, verbatim:
+
+> rank the project again
+
+> yes
+
+> rank the project again after this is done
+
+**Workflow and findings:**
+
+- A cold review scored 8.3/10 with no correctness bugs on the core path, and its verdict was that the remaining items were marginal.
+- The clean-clone run found a second intermittent failure: the console demo waited out the real ~300 ms grouping window with wall-clock sleeps, so under load the digest printed after the window line (1 of 5 cold verify runs). The demo now drives the real pipeline on virtual time, and the golden output is byte-identical. 30/30 golden checks and 30/30 golden tests passed, including runs under concurrent load, and 3 cold verify runs were green.
+- `PATCH /v1/preferences` accepts `application/merge-patch+json` as documented.
+- `TYPE_META.groupable` was removed, so grouping has one source of truth, the resolvers' `groupKey`.
+- Per-call dispatch state moved from instance fields to locals.
+- HLD goals G2 (extensibility) and G3 (no lost notifications) were reworded to match the code.
+- Coverage is stated precisely: core 99.6% lines, server 96.3%, combined 98.4%.
+- The README gained a Node 25+ pnpm note.
+
+**Verification:**
+
+- `pnpm bench`: budgets met (~194k events/s, worst p99 22 µs).
