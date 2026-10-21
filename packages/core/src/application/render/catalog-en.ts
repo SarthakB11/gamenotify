@@ -69,10 +69,10 @@ export const EN_CATALOG = Object.freeze({
   PVP_ATTACKED: (input) => {
     const count = input.intent.groupCount ?? 1;
     const distinct = input.intent.distinctActors ?? 1;
-    if (count > 1 && distinct === 1) {
-      const lead = leadActor(input);
-      // "more times" is only true if the attacker also triggered the already-delivered first notification.
-      const repeat = lead !== undefined && lead === input.intent.leadingActorId;
+    const lead = leadActor(input);
+    // "more times" is only true if the attacker also triggered the already-delivered first notification.
+    const repeat = lead !== undefined && lead === input.intent.leadingActorId;
+    if (distinct === 1 && (count > 1 || repeat)) {
       return {
         title: 'Under Attack!',
         message: `${quoted(input, lead)} attacked you ${count}${repeat ? ' more' : ''} ${plural(count, 'time', 'times')}!`,
@@ -97,7 +97,7 @@ export const EN_CATALOG = Object.freeze({
     message: `${quoted(input, input.intent.actorId)} accepted your friend request.`,
   }),
   NEW_FOLLOWER: (input) => ({
-    title: (input.intent.groupCount ?? 1) > 1 ? 'New Followers' : 'New Follower',
+    title: (input.intent.distinctActors ?? 1) > 1 ? 'New Followers' : 'New Follower',
     message: `${actorPhrase(input)} started following you.`,
   }),
 } satisfies Record<NotificationType, Template>);

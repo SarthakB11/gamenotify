@@ -155,6 +155,28 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(flushed[0]?.intent).toMatchObject({ groupCount: 3, actorIds: [3], distinctActors: 1, leadingActorId: 5 });
   });
 
+  it('does not count the leading actor in the digest: Bram, Kael, Bram names only Kael', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (const actor of [2, 3, 2]) g.offer(ctxFor('NEW_FOLLOWER', clock.now(), actor, 'k'));
+    scheduler.advance(2_000);
+    expect(flushed[0]?.intent).toMatchObject({ actorIds: [3], distinctActors: 1, groupCount: 1, leadingActorId: 2 });
+  });
+
+  it('drops a follower digest made only of repeats of the leading actor', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (let i = 0; i < 3; i++) g.offer(ctxFor('NEW_FOLLOWER', clock.now(), 2, 'k'));
+    scheduler.advance(2_000);
+    expect(flushed).toHaveLength(0);
+    expect(g.openGroups).toBe(0);
+  });
+
+  it('keeps a repeat-only PvP digest so it can say "more times"', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (let i = 0; i < 3; i++) g.offer(ctxFor('PVP_ATTACKED', clock.now(), 2, 'v'));
+    scheduler.advance(2_000);
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 2, actorIds: [2], distinctActors: 1, leadingActorId: 2 });
+  });
+
   it('a single held intent is emitted as-is', () => {
     const { g, clock, scheduler, flushed } = make();
     g.offer(ctxFor('NEW_FOLLOWER', 0, 2, 'k'));
@@ -205,7 +227,7 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(flushed).toHaveLength(1);
   });
 
-  it('property: conservation — passed + Σ groupCount(flushed) = offered', () => {
+  it('property: conservation — passed + Σ groupCount(flushed) + absorbed repeats = offered', () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -227,7 +249,7 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
           }
           scheduler.advance(10_000);
           const grouped = flushed.reduce((n, f) => n + (f.intent.groupCount ?? 1), 0);
-          expect(passed + grouped).toBe(events.length);
+          expect(passed + grouped + g.absorbedRepeats).toBe(events.length);
         },
       ),
     );

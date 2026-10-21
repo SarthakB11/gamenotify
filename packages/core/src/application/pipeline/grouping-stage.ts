@@ -1,4 +1,4 @@
-import { DeliveryMode, type NotificationIntent, type PlayerId } from '../../domain/index.ts';
+import { DeliveryMode, type NotificationIntent, NotificationType, type PlayerId } from '../../domain/index.ts';
 import type { Clock, Scheduler } from '../../ports/index.ts';
 import type { StageContext } from './stage.ts';
 
@@ -16,6 +16,8 @@ interface Group {
   readonly leadingActorId: PlayerId | undefined;
   windowEnd: number;
   held: number;
+  /** Held events whose actor is not the leading one (or has none). */
+  heldOthers: number;
   readonly actors: PlayerId[];
   readonly distinct: Set<PlayerId>;
   last: NotificationIntent | null;
@@ -41,6 +43,7 @@ export class GroupingStage {
   readonly #clock: Clock;
   readonly #scheduler: Scheduler;
   #onFlush: GroupFlushHandler = () => {};
+  #absorbed = 0;
 
   constructor(opts: GroupingOptions, clock: Clock, scheduler: Scheduler) {
     if (opts.windowMs <= 0 || opts.maxWindowMs < opts.windowMs) throw new RangeError('invalid grouping windows');
@@ -53,6 +56,11 @@ export class GroupingStage {
 
   onFlush(handler: GroupFlushHandler): void {
     this.#onFlush = handler;
+  }
+
+  /** Held events folded into the leading notification's actor (repeats) rather than counted in a digest. */
+  get absorbedRepeats(): number {
+    return this.#absorbed;
   }
 
   get openGroups(): number {
@@ -72,6 +80,7 @@ export class GroupingStage {
         leadingActorId: intent.actorId,
         windowEnd: now + this.#windowMs,
         held: 0,
+        heldOthers: 0,
         actors: [],
         distinct: new Set(),
         last: null,
@@ -83,9 +92,14 @@ export class GroupingStage {
 
     g.held++;
     g.last = intent;
-    if (intent.actorId !== undefined && !g.distinct.has(intent.actorId)) {
-      if (g.distinct.size < MAX_DISTINCT) g.distinct.add(intent.actorId);
-      if (g.actors.length < this.#maxActors) g.actors.push(intent.actorId);
+    // The leading actor was already named by the delivered leading-edge notification, so the digest
+    // counts and names only actors distinct from it.
+    if (intent.actorId === undefined || intent.actorId !== g.leadingActorId) {
+      g.heldOthers++;
+      if (intent.actorId !== undefined && !g.distinct.has(intent.actorId)) {
+        if (g.distinct.size < MAX_DISTINCT) g.distinct.add(intent.actorId);
+        if (g.actors.length < this.#maxActors) g.actors.push(intent.actorId);
+      }
     }
     g.windowEnd = Math.min(now + this.#windowMs, g.openedAt + this.#maxWindowMs);
     if (ctx.mode === DeliveryMode.SILENT) g.silent = true;
@@ -113,16 +127,27 @@ export class GroupingStage {
     if (g === undefined) return;
     this.#groups.delete(key);
     if (g.held === 0 || g.last === null) return;
-    const out: NotificationIntent =
-      g.held === 1
-        ? g.last
-        : {
-            ...g.last,
-            groupCount: g.held,
-            actorIds: [...g.actors],
-            distinctActors: Math.max(1, g.distinct.size),
-            ...(g.leadingActorId !== undefined ? { leadingActorId: g.leadingActorId } : {}),
-          };
+    const lead = g.leadingActorId;
+    // Every held event repeats the leading actor.
+    const repeatOnly = lead !== undefined && g.heldOthers === 0;
+    if (repeatOnly && g.last.type === NotificationType.NEW_FOLLOWER) {
+      this.#absorbed += g.held;
+      return; // a repeat follow adds nothing new
+    }
+    if (g.held === 1 && !repeatOnly) {
+      this.#onFlush(g.last, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
+      return;
+    }
+    const others = g.actors.length > 0;
+    const groupCount = others && g.distinct.size === 1 ? g.heldOthers : g.held;
+    this.#absorbed += g.held - groupCount;
+    const out: NotificationIntent = {
+      ...g.last,
+      groupCount,
+      actorIds: repeatOnly ? [lead] : [...g.actors],
+      distinctActors: repeatOnly ? 1 : Math.max(1, g.distinct.size),
+      ...(lead !== undefined ? { leadingActorId: lead } : {}),
+    };
     this.#onFlush(out, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
   }
 }

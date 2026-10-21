@@ -130,6 +130,59 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(sender.sent[1]?.notification.groupCount).toBe(4);
   });
 
+  describe('digest never repeats the actor of the leading notification', () => {
+    const burst = async (type: 'follow' | 'attack', actors: number[]) => {
+      const { core, sender, scheduler } = makeCore({ grouping: { windowMs: 1_000, maxWindowMs: 5_000 } });
+      for (const a of actors) {
+        if (type === 'follow') core.socialSystem.playerFollowed(a, 1);
+        else core.gameEngine.playerAttacked(a, 1);
+      }
+      await core.settle();
+      scheduler.advance(1_000);
+      await core.settle();
+      return sender.messages();
+    };
+
+    it('the same follower three times yields one notification, no digest', async () => {
+      expect(await burst('follow', [2, 2, 2])).toEqual(["Player 'Bram' started following you."]);
+    });
+
+    it('Bram, Kael, Bram: the digest names Kael alone', async () => {
+      expect(await burst('follow', [2, 3, 2])).toEqual([
+        "Player 'Bram' started following you.",
+        "Player 'Kael' started following you.",
+      ]);
+    });
+
+    it('repeated attacks by the leading attacker say "more times"', async () => {
+      expect(await burst('attack', [2, 2, 2])).toEqual([
+        "You're under attack by Player 'Bram'!",
+        "Player 'Bram' attacked you 2 more times!",
+      ]);
+    });
+
+    it('property: a digest never names the leading actor unless it is a "more" repeat', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.constantFrom('follow', 'attack'),
+          fc.array(fc.integer({ min: 2, max: 6 }), { minLength: 2, maxLength: 12 }),
+          async (type, actors) => {
+            const messages = await burst(type, actors);
+            const lead = /Player '(\w+)'/.exec(messages[0] ?? '')?.[1];
+            expect(lead).toBeDefined();
+            const digest = messages[1];
+            if (digest === undefined) return;
+            if (digest.includes(`'${lead}'`)) {
+              expect(new Set(actors).size).toBe(1);
+              expect(digest).toContain(' more ');
+            }
+          },
+        ),
+        { numRuns: 60 },
+      );
+    });
+  });
+
   it('PvP defeat notifies both players', async () => {
     const { core, sender } = makeCore();
     core.gameEngine.playerDefeated(5, 4);
