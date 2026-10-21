@@ -105,9 +105,10 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
     .register(new NewFollowerResolver());
   resolvers.assertComplete(ALL_EVENT_KINDS);
 
-  const stages = [
-    new IdempotencyStage(new TtlLruIdempotencyStore(cfg.dedup, clock)),
-    new PreferenceStage(),
+  const preferenceStage = new PreferenceStage();
+  const stages = [new IdempotencyStage(new TtlLruIdempotencyStore(cfg.dedup, clock)), preferenceStage] as const;
+  // After grouping: held events never spend tokens; the leading-edge intent and each digest do.
+  const emissionStages = [
     new RateLimitStage(
       new TokenBucketLimiter(
         { capacity: cfg.rateLimit.capacity, refillWindowMs: cfg.rateLimit.windowMs, maxBuckets: cfg.rateLimit.maxBuckets },
@@ -132,6 +133,7 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
   const dispatcher = new NotificationDispatcher({
     resolvers,
     stages,
+    emissionStages,
     grouping,
     renderer,
     inbox,

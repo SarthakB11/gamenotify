@@ -94,7 +94,7 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 - **Per-event-type overrides**, plus mute-for-N-minutes and quiet hours in the player's IANA time zone. HIGH-priority PvP attacks bypass quiet hours.
 - **Offline inbox + replay.** Every notification is stored with a per-player `seq`. On reconnect the browser sends `Last-Event-ID` and the server replays exactly what was missed. After a restart or eviction the server sends an explicit `resync`.
 - **Idempotency.** An event redelivered by an at-least-once producer notifies at most once.
-- **Rate limiting.** A token bucket per player and category. Notifications over the limit are **stored silently, never dropped**.
+- **Rate limiting.** A token bucket per player and category. Notifications over the limit are **stored silently, never dropped**. The limiter runs after grouping, so followers held back for a digest do not use up the budget.
 - **Burst grouping.** The first follower or attack is delivered instantly. The rest of the burst collapses into *"Player 'Kael' and 3 others started following you."*
 - **Ops:** Prometheus `/metrics`, `/healthz`, `/readyz`, structured logs, graceful shutdown, Docker health check.
 
@@ -108,9 +108,9 @@ flowchart LR
   SS["SocialSystem (sim)"] --> BUS
   API["POST /v1/events"] --> BUS
   BUS --> R["Intent resolvers<br/>(Strategy per event kind)"]
-  R --> P["Pipeline (Chain of Responsibility)<br/>idempotency → preferences → rate limit"]
-  P --> G["Grouping<br/>leading edge + digest"]
-  G --> RN["Renderer<br/>(templates)"] --> IB["Inbox<br/>per-player seq"] --> D["DeliveryRouter<br/>retry · DLQ"]
+  R --> P["Pipeline (Chain of Responsibility)<br/>idempotency → preferences"]
+  P --> G["Grouping<br/>leading edge + digest"] --> L["Rate limit<br/>emitted only"]
+  L --> RN["Renderer<br/>(templates)"] --> IB["Inbox<br/>per-player seq"] --> D["DeliveryRouter<br/>retry · DLQ"]
   D --> SSE["SSE gateway"] ==> C["Game client / React demo"]
 ```
 

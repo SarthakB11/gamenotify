@@ -30,7 +30,7 @@ gamenotify/
 │        ├─ application/
 │        │  ├─ bus/                 # InProcessEventBus, RingBuffer
 │        │  ├─ resolvers/           # one IntentResolver per event kind (Strategy)
-│        │  ├─ pipeline/            # stages: idempotency, preference, rate-limit, grouping
+│        │  ├─ pipeline/            # stages: idempotency, preference, grouping, rate-limit
 │        │  ├─ render/              # NotificationRenderer + message catalog
 │        │  ├─ delivery/            # DeliveryRouter, retry, DLQ
 │        │  ├─ dispatcher.ts        # NotificationDispatcher (orchestrator)
@@ -443,7 +443,7 @@ The orchestrator. It subscribes to the bus once (`subscribeAll`) and runs the pi
 ```ts
 export class NotificationDispatcher {
   constructor(deps: {
-    resolvers: ResolverRegistry; pre: PipelineStage[]; grouping: GroupingStage;
+    resolvers: ResolverRegistry; pre: PipelineStage[]; post: PipelineStage[]; grouping: GroupingStage;
     renderer: NotificationRenderer; inbox: InboxRepository; delivery: DeliveryRouter;
     prefs: PreferenceRepository; clock: Clock; metrics: Metrics; log: Logger;
   }) { ... }
@@ -464,6 +464,7 @@ export class NotificationDispatcher {
       if (verdict.kind === 'suppress') { this.#suppressed(intent, verdict.reason); continue; }
       const g = this.grouping.offer(ctx);                          // leading-edge pass or hold
       if (g === 'held') { this.#suppressed(intent, 'GROUPED'); continue; }
+      runStages(this.post, ctx);                                   // rate limit: only what is emitted spends tokens
       await this.#finish(intent, ctx.mode);
     }
     this.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1e3);
@@ -518,7 +519,9 @@ export class ResolverRegistry {
 
 The rarity gate sits in the resolver, not the preference stage. It is a **product rule about the event** ("only rare items are notification-worthy"), not a user choice.
 
-### 5.4 Pre-grouping pipeline stages (Chain of Responsibility)
+### 5.4 Pipeline stages (Chain of Responsibility)
+
+Idempotency and preferences run before grouping (`pre`). The rate limiter runs after it (`post`), so events that grouping holds back never consume tokens. Only the leading-edge intent and each digest do.
 
 ```ts
 export type Verdict = { kind: 'continue' } | { kind: 'suppress'; reason: SuppressionReason };
@@ -532,7 +535,7 @@ export const runStages = (stages: readonly PipelineStage[], ctx: StageContext): 
 };
 ```
 
-The stages are **synchronous and allocation-free** on the happy path. `CONTINUE` is a shared frozen constant. Order (cheapest and most selective first):
+The stages are **synchronous and allocation-free** on the happy path. `CONTINUE` is a shared frozen constant. Order (cheapest and most selective first): `Idempotency → Preference → Grouping → RateLimit`.
 
 #### 5.4.1 `IdempotencyStage`
 
@@ -584,6 +587,7 @@ The time zone is validated when preferences are saved, using `Intl.supportedValu
   - If `tokens >= 1`, decrement and return ok.
 - On deny: set `ctx.mode = SILENT` (never drop) and increment `rate_limited_total{category}`.
 - Applies only when `ctx.mode === LIVE` and `priority < HIGH`.
+- Runs after grouping. Held events are never offered to it, so a burst of 25 followers costs 1 token (leading edge) plus 1 (digest), not 25.
 - Memory bound: FIFO eviction through a ring of keys, capped at 200k buckets. There is no LRU touch on hit, which avoids Map delete/re-insert churn. An evicted bucket simply restarts full, which only ever errs towards delivering.
 
 ### 5.5 `GroupingStage` (leading-edge + trailing collapse, A6)
@@ -915,16 +919,13 @@ export function buildCore(cfg: Config, ports: { sender: NotificationSender; log:
     .register(new FriendRequestResolver()).register(new FriendAcceptedResolver()).register(new NewFollowerResolver());
   resolvers.assertComplete(ALL_EVENT_KINDS);                      // fail fast at boot
 
-  const pre = [
-    new IdempotencyStage(new TtlLruIdempotencyStore(cfg.dedup, clock)),
-    new PreferenceStage(),
-    new RateLimitStage(new TokenBucketLimiter(cfg.rateLimit, clock)),
-  ] as const;
+  const pre  = [new IdempotencyStage(new TtlLruIdempotencyStore(cfg.dedup, clock)), new PreferenceStage()] as const;
+  const post = [new RateLimitStage(new TokenBucketLimiter(cfg.rateLimit, clock))] as const;   // after grouping
   const grouping  = new GroupingStage({ windowMs: cfg.grouping.windowMs, maxWindowMs: cfg.grouping.maxWindowMs, clock, scheduler: sched });
   const renderer  = new NotificationRenderer(EN_CATALOG, directory, catalog, new NotificationFactory(ids, clock));
   const delivery  = new DeliveryRouter({ channels: [new InAppChannel(ports.sender)], retry: cfg.retry,
                                          dlq: new InMemoryDeadLetterQueue(1_000), prefs, clock, metrics: ports.metrics });
-  const dispatcher = new NotificationDispatcher({ resolvers, pre, grouping, renderer, inbox, delivery, prefs, clock, metrics: ports.metrics, log: ports.log });
+  const dispatcher = new NotificationDispatcher({ resolvers, pre, post, grouping, renderer, inbox, delivery, prefs, clock, metrics: ports.metrics, log: ports.log });
   const stop = dispatcher.start(bus);
 
   return {

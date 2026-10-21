@@ -72,6 +72,21 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(5);
   });
 
+  it('held follower events do not consume rate-limit tokens: a friend request still goes out live', async () => {
+    const { core, sender, clock, scheduler } = makeCore();
+    for (let i = 0; i < 25; i++) {
+      core.socialSystem.playerFollowed(2 + (i % 5), 1);
+      clock.advance(100);
+    }
+    core.socialSystem.friendRequestSent(3, 1);
+    await core.settle();
+    expect(sender.messages()).toEqual(["Player 'Bram' started following you.", "Player 'Kael' has sent you a friend request."]);
+    scheduler.advance(10_000);
+    await core.settle();
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries.map((e) => e.mode)).toEqual(['LIVE', 'LIVE', 'LIVE']);
+    expect(sender.sent).toHaveLength(3);
+  });
+
   it('graceful shutdown flushes open groups', async () => {
     const { core, sender } = makeCore();
     core.socialSystem.playerFollowed(2, 1);

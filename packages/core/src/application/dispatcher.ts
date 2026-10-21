@@ -38,7 +38,10 @@ export interface DispatchObserver {
 
 export interface DispatcherDeps {
   readonly resolvers: ResolverRegistry;
+  /** Run on every intent before grouping (idempotency, preferences). Held events stop here. */
   readonly stages: readonly PipelineStage[];
+  /** Run only on what is actually emitted, after grouping: the leading-edge intent and each digest (rate limit). */
+  readonly emissionStages: readonly PipelineStage[];
   readonly grouping: GroupingStage;
   readonly renderer: NotificationRenderer;
   readonly inbox: InboxRepository;
@@ -53,7 +56,7 @@ export interface DispatcherDeps {
  * Orchestrates the brief's flow — receive event → determine type → check preferences → create → send —
  * with filters applied to cheap intents before the Notification is rendered:
  *
- *   event → resolvers → [idempotency → preferences → rate-limit] → grouping → render → inbox → delivery
+ *   event → resolvers → [idempotency → preferences] → grouping → [rate-limit] → render → inbox → delivery
  */
 export class NotificationDispatcher {
   readonly #d: DispatcherDeps;
@@ -62,7 +65,7 @@ export class NotificationDispatcher {
 
   constructor(deps: DispatcherDeps) {
     this.#d = deps;
-    deps.grouping.onFlush((intent, mode) => this.#finish(intent, mode));
+    deps.grouping.onFlush((intent, mode) => this.#emitDigest(intent, mode));
   }
 
   observe(observer: DispatchObserver): Unsubscribe {
@@ -103,6 +106,8 @@ export class NotificationDispatcher {
         this.#suppressed(event.eventId, r.recipientId, r.type, 'GROUPED');
         continue;
       }
+      // Only what is emitted (leading edge, ungrouped) spends rate-limit tokens; held events never do.
+      runStages(d.emissionStages, ctx);
       this.#finish(r, ctx.mode);
     }
     d.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1000);
@@ -111,6 +116,14 @@ export class NotificationDispatcher {
   /** Resolves when no delivery attempt is in flight (graceful shutdown, tests). */
   async idle(): Promise<void> {
     while (this.#inflight.size > 0) await Promise.allSettled([...this.#inflight]);
+  }
+
+  /** Trailing digest: it is emitted, so it spends a rate-limit token like any other live notification. */
+  #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {
+    const d = this.#d;
+    const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode, now: d.clock.now() };
+    runStages(d.emissionStages, ctx);
+    this.#finish(intent, ctx.mode);
   }
 
   #finish(intent: NotificationIntent, mode: DeliveryMode): void {

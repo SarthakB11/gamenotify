@@ -88,7 +88,7 @@ The brief leaves these product points open. Each was raised as a clarifying ques
 | A4 | **PvP** | `playerAttacked(attackerId, victimId)` notifies the victim. `playerDefeated(winnerId, loserId)` notifies **both** sides with different messages. PvP falls under the **Game** category and can be muted per type. |
 | A5 | Disabled vs. muted | **Disabled** (category or type off) means the notification is never created or stored. **Muted or quiet hours** means it is stored in the inbox but not pushed live. The player sees it the next time they open the inbox. |
 | A6 | **Grouping** | Applies only to `NEW_FOLLOWER` and `PVP_ATTACKED`. The first event in a window is delivered **immediately** (leading edge). Later events within 10 s are collapsed into one follow-up: *"Kael and 3 others started following you."* Friend requests are never grouped because each one needs action. |
-| A7 | Rate limit | 20 live notifications per player per category per minute, using a token bucket. Notifications over the limit are **downgraded to silent**: stored in the inbox, not dropped. |
+| A7 | Rate limit | 20 live notifications per player per category per minute, using a token bucket. Notifications over the limit are **downgraded to silent**: stored in the inbox, not dropped. The limiter runs after grouping, so events held for a digest spend no tokens; only what is emitted (the leading-edge notification and the digest) does. |
 | A8 | Inbox retention | Each player keeps their last **200** notifications or **7 days**, whichever limit is hit first. A reconnect older than that window triggers a `resync`. |
 | A9 | Player and item names | Player IDs are numeric, as in the brief. Display names come from a `PlayerDirectory` port, and item names and rarity come from an `ItemCatalog` port. Both are seeded in memory. |
 | A10 | Defaults | New players have every category and type **enabled**, with no quiet hours. |
@@ -140,7 +140,7 @@ flowchart TB
     BUS[["Event Bus<br/>(bounded, typed, in-process)"]]
     subgraph Core["Core (pure TS)"]
       direction LR
-      RES["Intent Resolvers<br/>(per event kind)"] --> PIPE["Dispatch Pipeline<br/>dedup → prefs → rate-limit → group"]
+      RES["Intent Resolvers<br/>(per event kind)"] --> PIPE["Dispatch Pipeline<br/>dedup → prefs → group → rate-limit"]
       PIPE --> REN["Renderer<br/>(templates)"] --> INB["Inbox<br/>(per-player seq)"] --> DLV["Delivery Router"]
     end
     subgraph Driven["Driven adapters"]
@@ -184,7 +184,7 @@ sequenceDiagram
   BUS->>D: handle(event) [next tick, batched]
   D->>R: resolve(event)
   R-->>D: [Intent{recipient:1, type:LEVEL_UP, params:{level:15}}]
-  D->>P: dedup → preferences → rateLimit → grouping
+  D->>P: dedup → preferences → grouping → rateLimit
   P-->>D: verdict: deliver(mode=LIVE)
   D->>RN: render(intent)
   RN-->>D: Notification("Congratulations! You've reached level 15!")
@@ -233,7 +233,7 @@ The connection is registered **before** reading the inbox, and live entries that
 | `GameEngine`, `SocialSystem` (simulators) | Facade / Producer | Expose the brief's exact API (`playerLeveledUp(1, 15)` …) and publish typed domain events | Real producers publish to the same bus, or call `POST /v1/events` |
 | `EventBus` | Observer / Pub-Sub | Typed, bounded, non-blocking hand-off from producers to consumers. Isolates handler failures | Swap for NATS JetStream / Redis Streams (§12) |
 | `IntentResolver` registry | **Strategy** + Registry | One resolver per event kind. Maps an event to 1..n `NotificationIntent`s (PvP defeat → 2 intents) | Add an event = add a resolver |
-| Dispatch pipeline | **Chain of Responsibility** | Ordered, single-purpose stages: `Dedup → Preference → RateLimit → Grouping` | Insert a stage (e.g. A/B, spam score) without touching the others |
+| Dispatch pipeline | **Chain of Responsibility** | Ordered, single-purpose stages: `Dedup → Preference → Grouping → RateLimit` | Insert a stage (e.g. A/B, spam score) without touching the others |
 | `PreferencePolicy` | **Specification** | Combines category toggle, type override, mute-until and quiet hours into a verdict | New rule = new spec |
 | `NotificationRenderer` | **Template Method** + message catalog | Turns an intent into an immutable `Notification` (title, message, data) | i18n: a locale-keyed catalog |
 | `NotificationFactory` | **Factory** | The only place a `Notification` is constructed. Assigns ID (UUIDv7), timestamps, category and priority | — |
