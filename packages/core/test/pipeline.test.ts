@@ -125,8 +125,8 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     const clock = new FakeClock(0);
     const scheduler = new ManualScheduler(clock);
     const g = new GroupingStage({ windowMs, maxWindowMs }, clock, scheduler);
-    const flushed: { intent: NotificationIntent; mode: string }[] = [];
-    g.onFlush((intent, mode) => flushed.push({ intent, mode }));
+    const flushed: { intent: NotificationIntent }[] = [];
+    g.onFlush((intent) => flushed.push({ intent }));
     return { g, clock, scheduler, flushed };
   };
 
@@ -145,7 +145,6 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     scheduler.advance(2_000);
     expect(flushed).toHaveLength(1);
     expect(flushed[0]?.intent).toMatchObject({ groupCount: 4, actorIds: [3, 4, 5], distinctActors: 3 });
-    expect(flushed[0]?.mode).toBe('LIVE');
     expect(g.openGroups).toBe(0);
   });
 
@@ -219,17 +218,6 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     scheduler.advance(500); // ... but it closes at openedAt + maxWindowMs = 3000, not 3500
     expect(clock.now()).toBe(3_000);
     expect(flushed).toHaveLength(1);
-  });
-
-  it('a silent member makes the digest silent', () => {
-    const { g, scheduler, flushed } = make();
-    g.offer(ctxFor('NEW_FOLLOWER', 0, 2, 'k'));
-    const c = ctxFor('NEW_FOLLOWER', 0, 3, 'k');
-    c.mode = DeliveryMode.SILENT;
-    g.offer(c);
-    g.offer(ctxFor('NEW_FOLLOWER', 0, 4, 'k'));
-    scheduler.advance(1_000);
-    expect(flushed[0]?.mode).toBe('SILENT');
   });
 
   it('flushAll emits open groups (graceful shutdown)', () => {

@@ -1,4 +1,4 @@
-import { DeliveryMode, type NotificationIntent, NotificationType, type PlayerId } from '../../domain/index.ts';
+import { type NotificationIntent, NotificationType, type PlayerId } from '../../domain/index.ts';
 import type { Clock, Scheduler } from '../../ports/index.ts';
 import type { StageContext } from './stage.ts';
 
@@ -21,13 +21,16 @@ interface Group {
   readonly actors: PlayerId[];
   readonly distinct: Set<PlayerId>;
   last: NotificationIntent | null;
-  silent: boolean;
 }
 
 /** Bound on per-group distinct-actor tracking (memory safety under abuse). */
 const MAX_DISTINCT = 10_000;
 
-export type GroupFlushHandler = (intent: NotificationIntent, mode: DeliveryMode) => void;
+/**
+ * The digest carries no delivery mode: held events do not latch one. The dispatcher decides it from the
+ * preferences in force when the digest is emitted (a mute that ended inside the window must not leave it silent).
+ */
+export type GroupFlushHandler = (intent: NotificationIntent) => void;
 
 /**
  * Leading-edge + trailing-collapse grouping for bursty types (followers, PvP attacks):
@@ -84,7 +87,6 @@ export class GroupingStage {
         actors: [],
         distinct: new Set(),
         last: null,
-        silent: false,
       });
       this.#arm(key, this.#windowMs);
       return 'pass';
@@ -102,7 +104,6 @@ export class GroupingStage {
       }
     }
     g.windowEnd = Math.min(now + this.#windowMs, g.openedAt + this.#maxWindowMs);
-    if (ctx.mode === DeliveryMode.SILENT) g.silent = true;
     return 'held';
   }
 
@@ -141,7 +142,7 @@ export class GroupingStage {
       return; // a repeat follow adds nothing new
     }
     if (g.held === 1 && !repeatOnly) {
-      this.#onFlush(g.last, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
+      this.#onFlush(g.last);
       return;
     }
     const others = g.actors.length > 0;
@@ -154,6 +155,6 @@ export class GroupingStage {
       distinctActors: repeatOnly ? 1 : Math.max(1, g.distinct.size),
       ...(lead !== undefined ? { leadingActorId: lead } : {}),
     };
-    this.#onFlush(out, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
+    this.#onFlush(out);
   }
 }

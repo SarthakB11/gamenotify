@@ -279,6 +279,32 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(core.inboxService.page(PlayerId(1), null, 10).entries.map((e) => e.mode)).toEqual(['SILENT', 'LIVE']);
   });
 
+  it('a digest goes live when the mute ends inside the grouping window', async () => {
+    const { core, sender, scheduler, clock } = makeCore();
+    core.preferences.patch(PlayerId(1), { muteForMinutes: 0.05 }); // 3 s, ends inside the window
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    clock.advance(4_000); // mute is over; the window is still open
+    core.socialSystem.playerFollowed(5, 1); // held while unmuted
+    await core.settle();
+    scheduler.advance(20_000);
+    await core.settle();
+    const entries = core.inboxService.page(PlayerId(1), null, 10).entries;
+    expect(entries.map((e) => e.mode)).toEqual(['LIVE', 'SILENT']);
+    expect(sender.sent).toHaveLength(1);
+  });
+
+  it('a digest stays SILENT when the mute is still active at emission', async () => {
+    const { core, sender, scheduler } = makeCore();
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    core.preferences.patch(PlayerId(1), { muteForMinutes: 30 });
+    scheduler.advance(10_000);
+    await core.settle();
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries.map((e) => e.mode)).toEqual(['SILENT', 'LIVE']);
+    expect(sender.sent).toHaveLength(1);
+  });
+
   it('graceful shutdown flushes open groups', async () => {
     const { core, sender } = makeCore();
     core.socialSystem.playerFollowed(2, 1);

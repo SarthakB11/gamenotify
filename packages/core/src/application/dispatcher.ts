@@ -67,7 +67,7 @@ export class NotificationDispatcher {
 
   constructor(deps: DispatcherDeps) {
     this.#d = deps;
-    deps.grouping.onFlush((intent, mode) => this.#emitDigest(intent, mode));
+    deps.grouping.onFlush((intent) => this.#emitDigest(intent));
   }
 
   observe(observer: DispatchObserver): Unsubscribe {
@@ -136,13 +136,16 @@ export class NotificationDispatcher {
     while (this.#inflight.size > 0) await Promise.allSettled([...this.#inflight]);
   }
 
-  /** Trailing digest: preferences may have changed since the burst began, so they are evaluated again. */
-  #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {
+  /**
+   * Trailing digest: preferences may have changed since the burst began, so its mode is decided here, at emission
+   * (disabled → never created, muted / quiet → SILENT, otherwise LIVE), not latched from the first held event.
+   */
+  #emitDigest(intent: NotificationIntent): void {
     const d = this.#d;
     // Runs from a scheduler timer, outside handle(): an escaping throw would be an uncaught exception that kills the
     // process. The held events were already deduplicated, so there is nothing to roll back; the digest is dropped.
     try {
-      const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode, now: d.clock.now() };
+      const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode: DeliveryMode.LIVE, now: d.clock.now() };
       const verdict = runStages(d.digestStages, ctx);
       if (verdict.kind === 'suppress') {
         this.#suppressed(intent.sourceEventId, intent.recipientId, intent.type, verdict.reason);

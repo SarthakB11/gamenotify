@@ -452,7 +452,7 @@ export class NotificationDispatcher {
   }) { ... }
 
   start(bus: EventSubscriber): () => void {
-    this.grouping.onFlush((intent, mode) => this.#emitDigest(intent, mode)); // trailing group path
+    this.grouping.onFlush((intent) => this.#emitDigest(intent)); // trailing group path
     return bus.subscribeAll(e => this.handle(e));
   }
 
@@ -534,7 +534,7 @@ The rarity gate sits in the resolver, not the preference stage. It is a **produc
 
 Idempotency and preferences run before grouping (`pre`). The rate limiter runs after it (`post`), so events that grouping holds back never consume tokens. Only the leading-edge intent and each digest do.
 
-A digest is emitted up to `Wmax` after its events were held, so the dispatcher re-evaluates preferences (`digest` stages) and then the rate limit when it flushes. The flush runs from a scheduler timer, so `#emitDigest` catches any throw (render, inbox), logs it and counts `dispatch_errors_total{kind="digest"}` instead of letting it escape as an uncaught exception; the digest is dropped and later events are unaffected. A category or type disabled during the window means the digest is never created. A mute or quiet hours starting during the window stores it as SILENT.
+A digest is emitted up to `Wmax` after its events were held, so the dispatcher re-evaluates preferences (`digest` stages) and then the rate limit when it flushes. The flush runs from a scheduler timer, so `#emitDigest` catches any throw (render, inbox), logs it and counts `dispatch_errors_total{kind="digest"}` instead of letting it escape as an uncaught exception; the digest is dropped and later events are unaffected. A category or type disabled during the window means the digest is never created. The digest's mode is decided at emission, not latched from the held events: a mute or quiet hours in force when it is emitted store it as SILENT, and a mute that ended inside the window lets it go LIVE.
 
 ```ts
 export type Verdict = { kind: 'continue' } | { kind: 'suppress'; reason: SuppressionReason };
@@ -619,21 +619,20 @@ stateDiagram-v2
 
 ```ts
 interface Group { openedAt: number; windowEnd: number; held: number; actors: PlayerId[];
-                  last: NotificationIntent | null; silent: boolean }
+                  last: NotificationIntent | null }
 
 offer(ctx: StageContext): 'pass' | 'held' {
   const { intent } = ctx;
   if (!intent.groupKey) return 'pass';
   const g = this.#groups.get(intent.groupKey);
   if (!g) {                                                  // leading edge
-    this.#groups.set(intent.groupKey, { openedAt: ctx.now, windowEnd: ctx.now + this.W, held: 0, actors: [], last: null, silent: false });
+    this.#groups.set(intent.groupKey, { openedAt: ctx.now, windowEnd: ctx.now + this.W, held: 0, actors: [], last: null });
     this.#arm(intent.groupKey, this.W);
     return 'pass';
   }
   g.held++; g.last = intent;
   if (g.actors.length < 3) g.actors.push(intent.params.actorId as PlayerId);
   g.windowEnd = Math.min(ctx.now + this.W, g.openedAt + this.Wmax);   // sliding, capped
-  if (ctx.mode === DeliveryMode.SILENT) g.silent = true;              // any silent member → silent digest
   return 'held';
 }
 
@@ -646,7 +645,7 @@ offer(ctx: StageContext): 'pass' | 'held' {
     if (g.held === 0) return;
     const out = g.held === 1 ? g.last!
       : { ...g.last!, actorIds: g.actors, groupCount: g.held, sourceEventId: g.last!.sourceEventId };
-    this.#flush(out, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE); // → dispatcher.#finish
+    this.#flush(out);   // → dispatcher.#emitDigest, which decides LIVE / SILENT from the preferences at emission
   }, ms);
 }
 ```
