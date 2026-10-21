@@ -954,10 +954,11 @@ export function buildCore(cfg: Config, ports: { sender: NotificationSender; log:
 - **Startup:** load config → build Fastify → `buildCore` with `SseNotificationSender` → register routes → listen.
 - **On `SIGTERM`/`SIGINT`:**
   1. `readyz` returns 503.
-  2. `fastify.close()` stops accepting connections.
+  2. Ingest (`POST /v1/events`, the dev simulator) is refused with `503` + `Retry-After`, so no request is acknowledged after the core stops.
   3. `core.shutdown()` runs.
   4. SSE connections are closed (clients reconnect elsewhere after `retry`).
-  5. The process exits with code 0, with a 10 s hard deadline.
+  5. `fastify.close()` stops accepting connections.
+  6. The process exits with code 0, with a 10 s hard deadline.
 
 ---
 

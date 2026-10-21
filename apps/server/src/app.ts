@@ -40,7 +40,7 @@ export interface App {
   readonly core: Core;
   readonly registry: ConnectionRegistry;
   readonly metricsRegistry: Registry;
-  /** Graceful shutdown: readiness off → stop HTTP → drain core → close streams. */
+  /** Graceful shutdown: readiness off → refuse ingest → drain core → close streams → stop HTTP. */
   close(): Promise<void>;
 }
 
@@ -83,6 +83,8 @@ export async function buildApp(config: ServerConfig): Promise<App> {
   );
   const auth = new DevAuthenticator(config.authSecret);
   let ready = true;
+  /** Set first thing on shutdown: from then on ingest is refused, so nothing is acknowledged after the core stops. */
+  let closing = false;
 
   // ── Cross-cutting hooks ────────────────────────────────────────────────────
   server.decorateRequest('playerId', null);
@@ -112,6 +114,12 @@ export async function buildApp(config: ServerConfig): Promise<App> {
   const requireInternalKey = async (req: FastifyRequest, reply: FastifyReply) => {
     if (!config.internalApiKey || req.headers['x-internal-key'] !== config.internalApiKey) {
       return problem(reply, 401, 'Unauthorized', 'Missing or invalid x-internal-key');
+    }
+  };
+  const refuseWhenClosing = async (_req: FastifyRequest, reply: FastifyReply) => {
+    if (closing) {
+      reply.header('Retry-After', '1');
+      return problem(reply, 503, 'Shutting down');
     }
   };
   const devOnly = async (_req: FastifyRequest, reply: FastifyReply) => {
@@ -275,7 +283,7 @@ export async function buildApp(config: ServerConfig): Promise<App> {
   // ── Ingestion for real producers ───────────────────────────────────────────
   server.post<{ Body: Record<string, unknown> & { kind: string } }>(
     '/v1/events',
-    { schema: { body: platformEventBody }, preHandler: requireInternalKey },
+    { schema: { body: platformEventBody }, preHandler: [refuseWhenClosing, requireInternalKey] },
     async (req, reply) => {
       const body = req.body;
       const event = {
@@ -294,7 +302,7 @@ export async function buildApp(config: ServerConfig): Promise<App> {
   // ── Dev simulator (drives the web demo; mirrors the brief's calls) ─────────
   server.post<{ Body: { action: SimulateAction; args: (number | string)[]; repeat: number } }>(
     '/v1/dev/simulate',
-    { schema: { body: simulateBody }, preHandler: devOnly },
+    { schema: { body: simulateBody }, preHandler: [refuseWhenClosing, devOnly] },
     async (req, reply) => {
       const { action, args, repeat } = req.body;
       const [a, b] = args;
@@ -332,6 +340,7 @@ export async function buildApp(config: ServerConfig): Promise<App> {
     metricsRegistry,
     async close() {
       ready = false;
+      closing = true;
       registry.stopHeartbeat();
       await core.shutdown();
       registry.closeAll();

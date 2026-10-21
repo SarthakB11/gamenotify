@@ -215,3 +215,40 @@ describe('POST /v1/dev/simulate', () => {
     expect((await call('/v1/dev/simulate', { method: 'POST', json: { action: 'hack', args: [1, 2] } })).status).toBe(400);
   });
 });
+
+describe('graceful shutdown', () => {
+  it('never acknowledges an event it will not deliver: ingest is refused once shutdown starts', async () => {
+    const { base, app, stop: close } = await setup();
+    stop = undefined;
+
+    // Hold shutdown open right after the core has drained, i.e. in the window where HTTP used to still accept.
+    let coreDrained!: () => void;
+    const drained = new Promise<void>((r) => {
+      coreDrained = r;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const shutdown = app.core.shutdown.bind(app.core);
+    app.core.shutdown = async () => {
+      await shutdown();
+      coreDrained();
+      await gate;
+    };
+
+    const closing = close();
+    await drained;
+    const r = await api(base)('/v1/events', {
+      method: 'POST',
+      headers: { 'x-internal-key': 'dev-internal-key' },
+      json: { kind: 'game.player_leveled_up', eventId: 'late-1', playerId: 1, newLevel: 7 },
+    });
+    release();
+    await closing;
+
+    expect(r.status).toBe(503);
+    expect(r.headers.get('retry-after')).toBe('1');
+    expect(app.core.inboxService.page(1 as never, null, 10).entries).toHaveLength(0);
+  });
+});
