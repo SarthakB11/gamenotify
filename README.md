@@ -1,6 +1,6 @@
 # GameNotify · Real-Time Notification System for a Gaming Platform
 
-A small, production-shaped notification service. It takes **game events** (level up, rare item, challenge, PvP) and **social events** (friend request, friend accepted, new follower). For each event it decides who should be told, checks that player's **preferences**, writes a clear message, and pushes it **in real time** to the game client.
+A small, production-shaped notification service as a standalone project. It takes **game events** (level up, rare item, challenge, PvP) and **social events** (friend request, friend accepted, new follower). For each event it decides who should be told, checks that player's **preferences**, writes a clear message, and pushes it **in real time** to the game client.
 
 ```
 gameEngine.playerLeveledUp(1, 15)          → #1 Aria  [GAME/LEVEL_UP]         Congratulations! You've reached level 15!
@@ -9,7 +9,7 @@ socialSystem.friendRequestSent(3, 1)       → #1 Aria  [SOCIAL/FRIEND_REQUEST] 
 socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED] Player 'Aria' accepted your friend request.
 ```
 
-> **Stack:** TypeScript 7 · Node.js 24 LTS · Fastify 5 · Server-Sent Events · React 19 + Vite · Vitest + fast-check · pnpm workspaces · Docker · GitHub Actions. This matches GameNotify's published full-stack role (TypeScript / Node / React).
+> **Stack:** TypeScript 7 · Node.js 24 LTS · Fastify 5 · Server-Sent Events · React 19 + Vite · Vitest + fast-check · pnpm workspaces · Docker · GitHub Actions.
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "gamenotify",
   "version": "1.0.0",
   "private": true,
-  "description": "Real-time notification system for a gaming platform",
+  "description": "Real-time notification system for a gaming platform (GameNotify)",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": {

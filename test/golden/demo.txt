@@ -1,4 +1,4 @@
-=== GameNotify Notification System — demo ===
+=== GameNotify — demo ===
 
 -- Brief example triggers --
 gameEngine.playerLeveledUp(1, 15)

@@ -247,7 +247,7 @@ The connection is registered **before** reading the inbox, and live entries that
 
 ## 6. Technology choices
 
-Selected to match GameNotify's published stack (TypeScript, Node.js, React, PostgreSQL, AWS, Docker, Kubernetes, GitHub Actions) and current best practice as of Oct 2026.
+Selected for a mainstream TypeScript, Node.js and React stack and current best practice as of Oct 2026.
 
 | Concern | Choice | Why | Alternatives considered |
 |---|---|---|---|
@@ -334,7 +334,7 @@ The first build ran at 76 µs per event. Profiling found V8 Map tombstones in th
 
 ## 10. Security and privacy
 
-- **AuthN for the stream.** `EventSource` cannot send headers, so the demo uses an HMAC-signed, short-lived token (`/v1/dev/login`) delivered as an **HttpOnly SameSite cookie**. Production would use OIDC/JWT from GameNotify's IdP.
+- **AuthN for the stream.** `EventSource` cannot send headers, so the demo uses an HMAC-signed, short-lived token (`/v1/dev/login`) delivered as an **HttpOnly SameSite cookie**. Production would use OIDC/JWT from the platform's identity provider.
 - **AuthZ.** A player can only stream and read their **own** inbox. The player ID comes from the token, never from the URL.
 - **Input validation.** Every external payload is validated with JSON Schema (Ajv), and unknown fields are rejected.
 - **Output safety.** Messages are plain text. Interpolated names are length-capped and control-character-stripped. The client renders text nodes, never HTML.
@@ -405,7 +405,7 @@ The core is built first and is always shippable, so if time runs short, extras a
 
 | ADR | Decision | Key trade-off |
 |---|---|---|
-| 001 | TypeScript / Node 24, aligned with the target stack | Single thread → we design for non-blocking I/O, not CPU parallelism |
+| 001 | TypeScript / Node 24, mainstream, well-supported stack | Single thread → we design for non-blocking I/O, not CPU parallelism |
 | 002 | Hexagonal core + in-process typed bus | Small indirection cost; large gain in testability and extensibility |
 | 003 | SSE over WebSocket for the live channel | No client→server messages on the stream (we use REST for those) in exchange for free reconnect and replay |
 | 004 | Preference check before rendering ("intent first") | Two-step model (intent → notification) in exchange for less wasted work |

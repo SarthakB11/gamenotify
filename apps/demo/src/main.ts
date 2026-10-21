@@ -58,7 +58,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const { gameEngine, socialSystem } = core;
 
-out(bold('=== GameNotify Notification System — demo ==='));
+out(bold('=== GameNotify — demo ==='));
 
 section('Brief example triggers');
 call('gameEngine.playerLeveledUp(1, 15)', () => gameEngine.playerLeveledUp(1, 15));

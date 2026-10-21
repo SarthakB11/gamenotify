@@ -3,7 +3,7 @@
 **Status:** Accepted · **Date:** 2026-10-18
 
 ## Context
-The brief does not fix a language. Its example API (`gameEngine.playerLeveledUp(1, 15)`) uses camelCase, which suggests Java or TypeScript. GameNotify's published Full Stack Software Developer role lists TypeScript, React/Next.js, Node.js/Express, Python, PostgreSQL, AWS, Docker/Kubernetes and GitHub Actions.
+The brief does not fix a language. Its example API (`gameEngine.playerLeveledUp(1, 15)`) uses camelCase, which suggests Java or TypeScript. TypeScript also fits the React front end and the Node.js ecosystem used here.
 
 ## Decision
 Build in **TypeScript 7** (native compiler, strict mode, `erasableSyntaxOnly`) on **Node.js 24 LTS**. CI also tests Node 26, which becomes LTS in late October 2026.

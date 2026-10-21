@@ -1092,7 +1092,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 Run with `NO_COLOR=1 DEMO_GROUP_WINDOW_MS=300`. This is the golden file `test/golden/demo.txt`, asserted in CI:
 
 ```
-=== GameNotify Notification System — demo ===
+=== GameNotify — demo ===
 
 -- Brief example triggers --
 gameEngine.playerLeveledUp(1, 15)

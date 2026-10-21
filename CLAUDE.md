@@ -3,7 +3,7 @@
 This file is loaded into every AI session on this repo. Read it before changing code.
 
 ## Project
-Real-time notification system for a gaming platform.
+Real-time notification system for a gaming platform (GameNotify).
 The design lives in `docs/HLD.md` and `docs/LLD.md`, and decisions in `docs/adr/`. **The docs are the spec.** If code and docs disagree, fix one of them in the same change.
 
 ## Commands
