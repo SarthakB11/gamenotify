@@ -56,11 +56,15 @@ export interface Player {
 }
 
 export class Api {
-  constructor(private readonly token: string | null) {}
+  readonly #token: string | null;
+
+  constructor(token: string | null) {
+    this.#token = token;
+  }
 
   private async call<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
     const headers = new Headers(init.headers);
-    if (this.token) headers.set('authorization', `Bearer ${this.token}`);
+    if (this.#token) headers.set('authorization', `Bearer ${this.#token}`);
     if (init.json !== undefined) headers.set('content-type', 'application/json');
     const res = await fetch(path, { ...init, headers, ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}) });
     if (!res.ok) {
