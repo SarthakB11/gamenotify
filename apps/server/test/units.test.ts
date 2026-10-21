@@ -165,4 +165,18 @@ describe('StreamTicketStore', () => {
     expect(store.size).toBe(3);
     expect(store.issue(p)).toBeNull();
   });
+
+  it('caps live tickets per player by evicting the oldest, so one player cannot exhaust the store', () => {
+    const store = new StreamTicketStore(30_000, 20, () => 0, 3);
+    const greedy = PlayerId(1);
+    const minted = Array.from({ length: 1_000 }, () => store.issue(greedy) as string);
+    expect(store.size).toBe(3);
+    expect(store.consume(minted[0] as string)).toBeNull(); // evicted
+    expect(store.consume(minted[996] as string)).toBeNull();
+    expect(store.consume(minted[999] as string)).toBe(greedy); // the newest still works (reconnect)
+    expect(store.size).toBe(2);
+
+    for (let n = 2; n <= 18; n++) expect(store.issue(PlayerId(n))).not.toBeNull(); // others are unaffected
+    expect(store.issue(PlayerId(99))).not.toBeNull();
+  });
 });
