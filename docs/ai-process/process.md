@@ -114,7 +114,7 @@ The core compiled cleanly on the first `tsc -b`. A smoke run reproduced the brie
 
 | Gate | What it caught |
 |---|---|
-| Node runtime | A regex built from ` ` escapes was written as a literal line separator, which is a `SyntaxError` at load. It was rewritten with escaped sequences, and the repo was scanned for any other invisible characters |
+| Node runtime | A regex built from ` ` escapes was written as a literal line separator, which is a `SyntaxError` at load. It was rewritten with escaped sequences, and the repo was scanned for any other invisible characters |
 | Unit tests | A grouping test computed the wrong timeline (the test was wrong, not the code). It was fixed and an intermediate assertion added |
 | Flakiness review | Two tests depended on async interleaving (DLQ retries, bus-full). Both were made deterministic: one with a per-recipient failing sender, the other with a gate that stalls the consumer |
 | **Profiler** (`--cpu-prof`) | **76 µs per event / 20k events/s.** 70% of the time was in the dedup store: iterating a V8 `Map` from its head after many deletions is O(n) because of tombstones. Fixes (ADR-010): ring-buffer eviction, pooled UUID entropy, shared frozen defaults, a sync delivery fast path. Result: **5.4 µs per event / ~128k events/s** |

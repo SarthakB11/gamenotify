@@ -35,7 +35,7 @@ export interface NotificationDto {
 }
 
 /**
- * The challenge states a Notification class is "provided"; it was not included in the PDF,
+ * The brief states a Notification class is "provided"; it was not included in the PDF,
  * so this is our definition (see README / HLD assumption A1).
  *
  * Immutable and channel-agnostic. Category and priority are derived from the type, so they can

@@ -7,7 +7,7 @@
 | **Version** | 1.1 (as built). Implementation notes are in LLD §15 |
 | **Author** | Sarthak Bhardwaj |
 | **Date** | 18 Oct 2026 |
-| **Status** | Implemented. Assumptions in §3 confirmed by the developer on 18 Oct 2026 |
+| **Status** | Implemented. Assumptions in §3 confirmed on 18 Oct 2026 |
 | **Companion** | [`LLD.md`](./LLD.md): classes, algorithms, APIs, test plan |
 
 ---
@@ -106,7 +106,7 @@ The brief leaves these product points open. Each was raised as a clarifying ques
 - **Driven adapters** carry results out: the SSE gateway, the console sender, and in-memory repositories.
 - Inside the core, an **in-process event bus** decouples producers from the notification pipeline. Each pipeline stage is a small Chain-of-Responsibility step with one job.
 
-Why this style: the brief explicitly grades *"flexibility and maintainability as the system grows"* and *"how you would approach potential changes."* Ports and adapters turn most "what if" questions into "add one adapter."
+Why this style: the project brief asks for *"flexibility and maintainability as the system grows"* and a clear approach to potential changes. Ports and adapters turn many "what if" scenarios into "add one adapter."
 
 ### 4.2 System context (C4 level 1)
 
@@ -251,7 +251,7 @@ Selected for a mainstream TypeScript, Node.js and React stack and current best p
 
 | Concern | Choice | Why | Alternatives considered |
 |---|---|---|---|
-| Language | **TypeScript 7** (native `tsc`), `strict`, `erasableSyntaxOnly` | Matches the target stack and the brief's camelCase API. TS 7 compiles about 10× faster. `erasableSyntaxOnly` keeps sources runnable by Node's built-in type stripping | TS 6.x (fallback if a tool breaks) |
+| Language | **TypeScript 7** (native `tsc`), `strict`, `erasableSyntaxOnly` | Matches the brief's camelCase API. TS 7 compiles about 10× faster. `erasableSyntaxOnly` keeps sources runnable by Node's built-in type stripping | TS 6.x (fallback if a tool breaks) |
 | Runtime | **Node.js 24 LTS** (CI also on 26) | Active LTS today. Node 26 reaches LTS in late Oct 2026 | Bun (faster cold start, less proven in their stack) |
 | HTTP | **Fastify 5** | About 2–3× Express throughput. Schema-compiled serialization. First-class TS types. Built-in `pino` | Express 5 (their stack; it is one adapter, so swapping is cheap) |
 | Real-time transport | **Server-Sent Events** (hand-rolled on Fastify) | Notifications are server→client only. Native auto-reconnect and `Last-Event-ID` give replay for free. Plain HTTP, so it is proxy- and HTTP/2-friendly | WebSocket (`ws`/uWS) when bidirectional is needed; Socket.IO (heavier, ~20 KB client) |
@@ -259,11 +259,11 @@ Selected for a mainstream TypeScript, Node.js and React stack and current best p
 | IDs | **UUIDv7** | Time-ordered, so it is index-friendly when the inbox moves to Postgres | ULID |
 | Logging | **pino** | Fastest structured JSON logger in Node. Fastify default | — |
 | Metrics | **prom-client** at `/metrics` | Prometheus/Grafana standard. Pairs with AWS-managed Prometheus | OpenTelemetry metrics SDK |
-| Client | **React 19 + Vite** | The target stack lists React. Vite gives a tiny, fast demo. Next.js is unnecessary for one screen | Next.js |
+| Client | **React 19 + Vite** | Vite gives a tiny, fast demo. Next.js is unnecessary for one screen | Next.js |
 | Monorepo | **pnpm workspaces** | Strict, fast, disk-efficient | npm workspaces, Turborepo (overkill here) |
 | Lint/format | **Biome 2** | One fast tool. Does not depend on the TS compiler API, which matters because typescript-eslint is not yet compatible with TS 7 | ESLint + Prettier |
 | Tests | **Vitest**, **fast-check**, an in-repo **architecture test**, **mitata**, Playwright (scripted browser check) | Unit and integration, property-based, layering rules (dependency-cruiser can't read TS 7 yet, see ADR-008), micro-benchmarks | Jest, dependency-cruiser |
-| Delivery | **Docker** (multi-stage, `node:24-slim`, non-root, health check), **GitHub Actions** | Matches the target stack. One command to run | Distroless (smaller, harder to debug) |
+| Delivery | **Docker** (multi-stage, `node:24-slim`, non-root, health check), **GitHub Actions** | One command to run | Distroless (smaller, harder to debug) |
 | In-process dispatch | **Hand-written typed bus** | MediatR-style libraries add indirection with no benefit at this size. The bus is about 80 lines and fully typed | Node `EventEmitter` (synchronous, untyped, no back-pressure) |
 
 ---
@@ -388,14 +388,13 @@ flowchart LR
 
 ## 14. Delivery plan
 
-
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | M0 · Sun 18 | Specs: HLD, LLD, ADRs, repo scaffold, CI | `pnpm test` green on an empty skeleton |
 | M1 · Mon 19 AM | **Core MVP**: bus, resolvers (FR-1..7), preferences (FR-9), renderer, console sender, demo (FR-12) | Brief acceptance test passes |
 | M2 · Mon 19 PM | SSE gateway, inbox + replay, REST, React client | Live demo in browser; replay test passes |
 | M3 · Tue 20 AM | Extras: type overrides, quiet hours, dedup, rate limit, grouping | Property tests pass |
-| M4 · Tue 20 PM | Docker, README, AI-process write-up, benchmarks, final polish | Fresh-clone run verified; repo public |
+| M4 · Tue 20 PM | Docker, README, AI-process write-up, benchmarks, final polish | Fresh-clone run verified |
 
 The core is built first and is always shippable, so if time runs short, extras are cut from the end of the list.
 
@@ -436,7 +435,7 @@ Full ADRs live in [`docs/adr/`](./adr/).
 
 ---
 
-## 17. AI-assisted development process (a graded deliverable)
+## 17. AI-assisted development process
 
 The process is captured **in the repo** under `docs/ai-process/`:
 

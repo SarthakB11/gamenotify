@@ -36,7 +36,7 @@ The design lives in `docs/HLD.md` and `docs/LLD.md`, and decisions in `docs/adr/
 - Prefer property tests (fast-check) for invariants: ordering, conservation, idempotency, rate bounds.
 - Exact user-facing strings are asserted. Changing a message is a product change, so update the tests and the golden file deliberately.
 
-## Product rules (confirmed by the developer, see README "Assumptions")
+## Product rules (confirmed up front, see README "Assumptions")
 - Rare+ items only.
 - Friend-accepted notifies the requester.
 - A PvP defeat notifies both players.

@@ -9,7 +9,7 @@ The brief does not fix a language. Its example API (`gameEngine.playerLeveledUp(
 Build in **TypeScript 7** (native compiler, strict mode, `erasableSyntaxOnly`) on **Node.js 24 LTS**. CI also tests Node 26, which becomes LTS in late October 2026.
 
 ## Consequences
-+ Matches a common TypeScript full-stack setup and the brief's API verbatim.
++ Matches the brief's API verbatim and the mainstream Node.js and React ecosystem.
 + TS 7 builds roughly 10× faster. `erasableSyntaxOnly` means sources also run directly under Node's type stripping (`pnpm dev`, `pnpm demo:dev`).
 − Single-threaded runtime: the design must keep the event loop free (batching, no sync I/O). CPU-parallel work would need worker threads.
 − TS 7 has no stable compiler API until 7.1, so typescript-eslint and dependency-cruiser cannot run on it. We use **Biome** for linting and an in-repo **architecture test** for layering (ADR-008).
