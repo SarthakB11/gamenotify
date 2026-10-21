@@ -13,7 +13,7 @@ flowchart LR
   E --> F[LLD + ADRs]
   F --> G[Core: tests + code]
   G --> H[Server · demo · web]
-  H --> I[Verify: types · 178 tests ·<br/>arch rules · golden · bench · load · browser · docker]
+  H --> I[Verify: types · 180 tests ·<br/>arch rules · golden · bench · load · browser · docker]
   I -->|defects found| G
 ```
 

@@ -18,7 +18,7 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 | File | What it does | Brief requirement |
 |---|---|---|
 | [`simulation/simulators.ts`](packages/core/src/simulation/simulators.ts#L24) | `GameEngine` and `SocialSystem` expose the example triggers (`playerLeveledUp`, `itemAcquired`, `friendRequestSent`, `friendRequestAccepted`) | "Example event triggers" |
-| [`application/dispatcher.ts`](packages/core/src/application/dispatcher.ts#L86) | `handle()` receives an event, resolves its type, runs the preference check, creates the notification (`#finish`) and sends it | "Receive event → determine type → check preferences → create → send" |
+| [`application/dispatcher.ts`](packages/core/src/application/dispatcher.ts#L86) | `handle()` receives an event, resolves its type, runs the preference check, creates the notification (`#store`) and sends it (`#announce`); `#emitDigest` does the same for a grouped digest | "Receive event → determine type → check preferences → create → send" |
 | [`application/pipeline/preference-stage.ts`](packages/core/src/application/pipeline/preference-stage.ts#L16) | Reads the player's Game/Social enable/disable map; disabled means nothing is created | "Per-user preferences (simple map)" |
 | [`domain/notification.ts`](packages/core/src/domain/notification.ts#L44) | The immutable `Notification` class (assumption A1) | "`Notification` class" |
 | [`application/render/catalog-en.ts`](packages/core/src/application/render/catalog-en.ts#L53) | The exact message text for every notification type | "Clear, concise messages" |
@@ -98,7 +98,7 @@ The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and ref
 **Everything CI runs:**
 
 ```bash
-pnpm verify   # lint → typecheck → tests (178) → architecture rules → build → golden demo check
+pnpm verify   # lint → typecheck → tests (180) → architecture rules → build → golden demo check
 pnpm bench    # performance budgets (p99 < 1 ms per event, ≥ 50k events/s)
 pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & RSS
 ```
@@ -134,13 +134,13 @@ The brief welcomes additional features once the core is complete. These were add
 
 | Area | Lines | Brief or extra |
 |---|---|---|
-| `packages/core/src` total (excluding the `testing/` helpers) | 2,851 | core package |
-| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 377 | extra |
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,855 | core package |
+| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 378 | extra |
 | of which: delivery router with retry/backoff, retry policy, dead-letter queue | 146 | extra |
-| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,328 | core path and its plumbing |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,331 | core path and its plumbing |
 | `apps/demo` (console demo) | 120 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,252 | extra |
-| `apps/web/src` (React client) | 570 | extra |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,261 | extra |
+| `apps/web/src` (React client) | 618 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
 | `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
 
@@ -251,7 +251,7 @@ Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on a quiet machine: Linux
 | End-to-end through the bus | ≈ 183k events/s |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 178 passing · line coverage 98.4% across core and server (core alone 99.6%, server 96.3%) |
+| Tests | 180 passing · line coverage 98.8% across core and server (core alone 99.6%, server 97.2%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 
