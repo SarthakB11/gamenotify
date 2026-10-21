@@ -23,8 +23,8 @@ The brief asks us to focus on the core logic: **receive events → decide the no
 | # | Goal |
 |---|---|
 | G1 | Meet every functional requirement in the brief with clear, informative messages. |
-| G2 | **Open/Closed growth.** A new event type, preference rule or delivery channel is added by *adding* a class and registering it. Existing code does not change. |
-| G3 | Real-time delivery to connected players, plus **no lost notifications** for players who are offline or briefly disconnected. |
+| G2 | **Cheap growth.** A new event type, preference rule or delivery channel is added mainly by *adding* a class or template and registering it. The dispatcher and pipeline do not change. A new event type still takes about six small registrations in existing files (§16). The compiler and the resolver registry's `assertComplete` catch every one except the REST schema in `apps/server/src/http/schemas.ts`. |
+| G3 | Real-time delivery to connected players, plus **no lost notifications while the process runs** for players who are offline or briefly disconnected. Within a running process a notification is stored in the inbox before delivery and replayed on reconnect. State is in memory, so a restart loses it; clients detect the new server epoch and resync. A grouped digest whose emit throws is dropped, logged and counted (`dispatch_errors_total{kind="digest"}`). |
 | G4 | Predictable low latency: under 1 ms p99 from event to send-call in process. Bounded memory under bursty load. |
 | G5 | Runs with one command. Clean, tested, documented and easy to defend. |
 

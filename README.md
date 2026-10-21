@@ -61,7 +61,7 @@ For pacing, the recording runs the server with `GROUP_WINDOW_MS=6000`; the defau
 
 ## Quick start
 
-**Requirements:** Node.js ≥ 24 and pnpm 10. Run `corepack enable` first and pnpm comes from `packageManager` automatically.
+**Requirements:** Node.js ≥ 24 and pnpm 10. Run `corepack enable` first and pnpm comes from `packageManager` (pinned to pnpm 10.28.0) automatically. Node 25+ no longer bundles `corepack`, so there install pnpm with `npm i -g pnpm@10`.
 
 No Node 24? Run `docker compose up --build` instead (needs only Docker). `pnpm install` refuses to run on older Node versions.
 
@@ -249,7 +249,7 @@ Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on a quiet machine: Linux
 | End-to-end through the bus | ≈ 183k events/s |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 178 passing · core line coverage ≈ 98% |
+| Tests | 178 passing · line coverage 98.4% across core and server (core alone 99.6%, server 96.3%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 
