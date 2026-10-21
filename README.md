@@ -17,11 +17,11 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 
 <p align="center">
   <a href="docs/media/demo.mp4">
-    <img src="docs/media/demo.webp" width="100%" alt="Demo: the console demo of the brief's triggers, then two players (Aria and Kael) in two browsers. Notifications arrive live over SSE, bursts are grouped, a PvP defeat notifies both players, and preferences disable or mute delivery.">
+    <img src="docs/media/demo.webp" width="100%" alt="Demo: the console demo of the example triggers, then two players (Aria and Kael) in two browsers. Notifications arrive live over SSE, bursts are grouped, a PvP defeat notifies both players, and preferences disable or mute delivery.">
   </a>
 </p>
 
-<p align="center"><b>▶ <a href="docs/media/demo.mp4">Watch the full-quality video (MP4, 1080p, 2 min 13 s)</a></b></p>
+<p align="center"><b>▶ <a href="docs/media/demo.mp4">Watch the full-quality video (MP4, 1080p, 2 min 12 s)</a></b></p>
 
 The recording shows the real server, SSE stream and React client running locally, driven by an automated browser:
 

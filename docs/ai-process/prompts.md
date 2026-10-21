@@ -124,13 +124,13 @@ Prompt, verbatim:
 - **Recorded the real system rather than a mock-up.** A Playwright script started the built server. It loaded two copies of the real React client (Aria and Kael) side by side on an HTML "stage". It drove the clients through the brief's triggers, cross-player delivery, grouping, PvP and preferences. Frames came from Chromium's screencast at about 28 fps.
 - **Added the presentation layer only on the stage page:** intro and chapter cards, a scripted cursor with click ripples, camera zooms, captions, highlight rings and an outro.
   - The console scene types out the real `pnpm demo` output.
-  - The latency badges are measured live, from the click in one browser to the toast in the other: **28 ms** and **26 ms** in the published take.
+  - The latency badges are measured live, from the click in one browser to the toast in the other: **20 ms** and **14 ms** in the published take.
 - **Kept the app unchanged.** The server sends `X-Frame-Options: DENY`, so only the recording harness strips that header to place the two clients in frames. Muted notifications are stored without being pushed, so the video shows Aria reopening the app to find the entry marked silent.
 - **Fixed problems found by reviewing frames between takes:**
   - Captions moved to the top when they covered toasts.
   - Highlight rings were timed to finish within the 5 s toast lifetime.
   - The app was scaled up to fill the browser windows.
 - **Made the video play inline on GitHub**, which does not play repository MP4s inline in a README:
-  - The README shows an animated WebP (1152 px, 12 fps, 19.8 MB, a keyframe every second) that links to the 1080p H.264 MP4 (20.5 MB, 2 min 13 s).
+  - The README shows an animated WebP (1152 px, 12 fps, 19.3 MB, a keyframe every second) that links to the 1080p H.264 MP4 (21.5 MB, 2 min 12 s).
   - Animated GIF was rejected because it came out at 45–90 MB.
   - A first WebP encode was rejected because its frame-diff artifacts built up into visible blocks.
