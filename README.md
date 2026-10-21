@@ -48,6 +48,8 @@ For pacing, the recording runs the server with `GROUP_WINDOW_MS=6000`; the defau
 
 **Requirements:** Node.js ≥ 24 and pnpm 10. Run `corepack enable` first and pnpm comes from `packageManager` automatically.
 
+No Node 24? Run `docker compose up --build` instead (needs only Docker). `pnpm install` refuses to run on older Node versions.
+
 ```bash
 pnpm install
 pnpm build          # compiles core + server + demo and bundles the web client
