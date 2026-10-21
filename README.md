@@ -13,6 +13,21 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 
 ---
 
+## Start here: the brief's core path in 6 files
+
+| File | What it does | Brief requirement |
+|---|---|---|
+| [`simulation/simulators.ts`](packages/core/src/simulation/simulators.ts#L24) | `GameEngine` and `SocialSystem` expose the example triggers (`playerLeveledUp`, `itemAcquired`, `friendRequestSent`, `friendRequestAccepted`) | "Example event triggers" |
+| [`application/dispatcher.ts`](packages/core/src/application/dispatcher.ts#L63) | `handle()` receives an event, resolves its type, runs the preference check, creates the notification (`#finish`) and sends it | "Receive event → determine type → check preferences → create → send" |
+| [`application/pipeline/preference-stage.ts`](packages/core/src/application/pipeline/preference-stage.ts#L16) | Reads the player's Game/Social enable/disable map; disabled means nothing is created | "Per-user preferences (simple map)" |
+| [`domain/notification.ts`](packages/core/src/domain/notification.ts#L44) | The immutable `Notification` class (assumption A1) | "`Notification` class" |
+| [`application/render/catalog-en.ts`](packages/core/src/application/render/catalog-en.ts#L53) | The exact message text for every notification type | "Clear, concise messages" |
+| [`application/delivery/in-app-channel.ts`](packages/core/src/application/delivery/in-app-channel.ts#L5) | The in-app channel: hands the notification to the existing client (`NotificationSender`) | "In-app, real-time delivery" |
+
+Run `pnpm demo` to see the brief's four triggers; everything else in the repo is optional extras (below).
+
+---
+
 ## Demo (2 min)
 
 <p align="center">
