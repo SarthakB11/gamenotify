@@ -64,10 +64,6 @@ export class NotificationDispatcher {
   readonly #d: DispatcherDeps;
   readonly #observers: DispatchObserver[] = [];
   readonly #inflight = new Set<Promise<void>>();
-  /** Set once the inbox holds the notification: from then on the dedup key must stay recorded. */
-  #stored = false;
-  /** Group key opened by the in-flight leading-edge event; cancelled if that event then fails. */
-  #openedGroup: string | undefined;
 
   constructor(deps: DispatcherDeps) {
     this.#d = deps;
@@ -103,38 +99,36 @@ export class NotificationDispatcher {
         mode: DeliveryMode.LIVE,
         now: d.clock.now(),
       };
-      this.#stored = false;
-      this.#openedGroup = undefined;
+      // Set once the inbox holds the notification: from then on the dedup key must stay recorded.
+      let stored = false;
+      // Group key opened by this leading-edge event; cancelled if the event then fails before storing.
+      let openedGroup: string | undefined;
       try {
-        this.#process(event.eventId, ctx);
+        const verdict = runStages(d.stages, ctx);
+        if (verdict.kind === 'suppress') {
+          this.#suppressed(event.eventId, r.recipientId, r.type, verdict.reason);
+          continue;
+        }
+        if (d.grouping.offer(ctx) === 'held') {
+          this.#suppressed(event.eventId, r.recipientId, r.type, 'GROUPED');
+          continue;
+        }
+        openedGroup = r.groupKey;
+        // Only what is emitted (leading edge, ungrouped) spends rate-limit tokens; held events never do.
+        runStages(d.emissionStages, ctx);
+        const entry = this.#store(r, ctx.mode);
+        stored = true;
+        this.#announce(entry, ctx.mode);
       } catch (error) {
         // Mark-then-rollback: release the dedup key so the producer's retry is processed, and keep
         // going so one recipient's failure (e.g. a PvP fan-out) does not drop the others.
-        if (!this.#stored) for (const stage of d.stages) stage.rollback?.(ctx);
-        if (!this.#stored && this.#openedGroup !== undefined) d.grouping.cancel(this.#openedGroup);
+        if (!stored) for (const stage of d.stages) stage.rollback?.(ctx);
+        if (!stored && openedGroup !== undefined) d.grouping.cancel(openedGroup);
         d.metrics.inc('dispatch_errors_total', { kind: event.kind });
         d.logger.error({ err: error, eventId: event.eventId, playerId: r.recipientId }, 'dispatch failed; will accept a retry');
       }
     }
     d.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1000);
-  }
-
-  #process(eventId: string, ctx: StageContext): void {
-    const d = this.#d;
-    const r = ctx.intent;
-    const verdict = runStages(d.stages, ctx);
-    if (verdict.kind === 'suppress') {
-      this.#suppressed(eventId, r.recipientId, r.type, verdict.reason);
-      return;
-    }
-    if (d.grouping.offer(ctx) === 'held') {
-      this.#suppressed(eventId, r.recipientId, r.type, 'GROUPED');
-      return;
-    }
-    if (r.groupKey !== undefined) this.#openedGroup = r.groupKey;
-    // Only what is emitted (leading edge, ungrouped) spends rate-limit tokens; held events never do.
-    runStages(d.emissionStages, ctx);
-    this.#finish(r, ctx.mode);
   }
 
   /** Resolves when no delivery attempt is in flight (graceful shutdown, tests). */
@@ -155,7 +149,7 @@ export class NotificationDispatcher {
         return;
       }
       runStages(d.emissionStages, ctx);
-      this.#finish(intent, ctx.mode);
+      this.#announce(this.#store(intent, ctx.mode), ctx.mode);
     } catch (error) {
       d.metrics.inc('dispatch_errors_total', { kind: 'digest' });
       d.logger.error(
@@ -165,11 +159,15 @@ export class NotificationDispatcher {
     }
   }
 
-  #finish(intent: NotificationIntent, mode: DeliveryMode): void {
+  /** Renders and appends to the inbox; once this returns the dedup key must stay recorded. */
+  #store(intent: NotificationIntent, mode: DeliveryMode): InboxEntry {
     const d = this.#d;
-    const notification = d.renderer.render(intent);
-    const entry = d.inbox.append(notification, mode);
-    this.#stored = true;
+    return d.inbox.append(d.renderer.render(intent), mode);
+  }
+
+  #announce(entry: InboxEntry, mode: DeliveryMode): void {
+    const d = this.#d;
+    const notification = entry.notification;
     d.metrics.inc('notifications_created_total', { type: notification.type, mode });
     for (const o of this.#observers) o.onCreated?.(entry);
     if (mode !== DeliveryMode.LIVE) return;
