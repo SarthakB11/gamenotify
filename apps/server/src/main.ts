@@ -1,7 +1,13 @@
 import { buildApp } from './app.ts';
 import { loadConfig } from './config.ts';
 
-const config = loadConfig();
+let config: ReturnType<typeof loadConfig>;
+try {
+  config = loadConfig();
+} catch (err) {
+  console.error(`Invalid configuration: ${(err as Error).message}`);
+  process.exit(1);
+}
 const app = await buildApp(config);
 
 let shuttingDown = false;

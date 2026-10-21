@@ -20,7 +20,9 @@ RUN pnpm build \
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM node:24-slim AS runtime
-ENV NODE_ENV=development \
+# Production by default: refuses to start with dev secrets and hides /v1/dev/*.
+# Run with NODE_ENV=development for the demo UI (docker-compose.yml does).
+ENV NODE_ENV=production \
     PORT=3000 \
     WEB_DIST_DIR=/app/web
 WORKDIR /app

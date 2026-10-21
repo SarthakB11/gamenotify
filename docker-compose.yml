@@ -5,7 +5,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Demo defaults. In production set NODE_ENV=production plus AUTH_SECRET and INTERNAL_API_KEY.
+      # Local demo only: the image defaults to production, which hides /v1/dev/* and needs real secrets
+      # (AUTH_SECRET and INTERNAL_API_KEY, 16+ chars, not the dev default).
       NODE_ENV: development
       LOG_LEVEL: info
       GROUP_WINDOW_MS: "5000"

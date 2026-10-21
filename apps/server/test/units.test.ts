@@ -120,4 +120,18 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ NODE_ENV: 'production' })).toThrow(/AUTH_SECRET/);
     expect(() => loadConfig({ NODE_ENV: 'production', AUTH_SECRET: 'x' })).toThrow(/INTERNAL_API_KEY/);
   });
+
+  it('refuses dev-default or weak secrets in production', () => {
+    const ok = {
+      NODE_ENV: 'production',
+      AUTH_SECRET: 'a-long-random-secret-value',
+      INTERNAL_API_KEY: 'a-long-random-internal-key',
+    };
+    expect(loadConfig(ok).env).toBe('production');
+    expect(() => loadConfig({ ...ok, INTERNAL_API_KEY: 'dev-internal-key' })).toThrow(/INTERNAL_API_KEY.*default/);
+    expect(() => loadConfig({ ...ok, AUTH_SECRET: 'short' })).toThrow(/AUTH_SECRET.*at least/);
+    expect(() => loadConfig({ ...ok, INTERNAL_API_KEY: 'short' })).toThrow(/INTERNAL_API_KEY.*at least/);
+    // Development keeps the convenient defaults.
+    expect(loadConfig({ NODE_ENV: 'development' }).internalApiKey).toBe('dev-internal-key');
+  });
 });

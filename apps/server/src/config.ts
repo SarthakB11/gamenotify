@@ -22,6 +22,10 @@ export interface ServerConfig {
   readonly core: CoreConfigOverrides;
 }
 
+/** Published in the repo, so never acceptable as a production secret. */
+export const DEV_INTERNAL_KEY = 'dev-internal-key';
+const MIN_SECRET_LENGTH = 16;
+
 type Env = Record<string, string | undefined>;
 
 const int = (env: Env, key: string, fallback: number, min = 0): number => {
@@ -38,6 +42,16 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   if (!['development', 'production', 'test'].includes(nodeEnv)) throw new Error(`Invalid NODE_ENV="${nodeEnv}"`);
   if (nodeEnv === 'production' && !env.AUTH_SECRET) throw new Error('AUTH_SECRET is required in production');
   if (nodeEnv === 'production' && !env.INTERNAL_API_KEY) throw new Error('INTERNAL_API_KEY is required in production');
+  if (nodeEnv === 'production') {
+    if (env.INTERNAL_API_KEY === DEV_INTERNAL_KEY) {
+      throw new Error('INTERNAL_API_KEY is still the public development default; set a private value in production');
+    }
+    for (const key of ['AUTH_SECRET', 'INTERNAL_API_KEY'] as const) {
+      if ((env[key] ?? '').length < MIN_SECRET_LENGTH) {
+        throw new Error(`${key} must be at least ${MIN_SECRET_LENGTH} characters in production`);
+      }
+    }
+  }
   const d = DEFAULT_CORE_CONFIG;
 
   return Object.freeze({
@@ -47,7 +61,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     logLevel: env.LOG_LEVEL ?? (nodeEnv === 'test' ? 'silent' : 'info'),
     authSecret: env.AUTH_SECRET ?? randomBytes(32).toString('hex'),
     authSecretGenerated: !env.AUTH_SECRET,
-    internalApiKey: env.INTERNAL_API_KEY ?? (nodeEnv === 'production' ? '' : 'dev-internal-key'),
+    internalApiKey: env.INTERNAL_API_KEY ?? (nodeEnv === 'production' ? '' : DEV_INTERNAL_KEY),
     webDistDir: env.WEB_DIST_DIR ?? null,
     syntheticPlayers: int(env, 'SYNTHETIC_PLAYERS', 0),
     sse: {
