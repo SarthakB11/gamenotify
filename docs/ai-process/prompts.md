@@ -106,7 +106,7 @@ Do NOT add secrets or tokens to the repo, and do not rewrite the design docs bey
 
 **What the AI did:**
 
-- **Unpacked** the attached zip (137 files) into the empty repo. The zip was never committed, so step h was not needed. No PDF or secrets were in the archive.
+- **Unpacked** the attached zip (137 files) into the empty repo. The archive was removed from the working tree in step 1, so it never entered a commit. No PDF or secrets were in the archive.
 - **Verified before committing** on Node 22.22 with pnpm 10.28.0. Engine warnings were expected. `pnpm install --frozen-lockfile` resolved 139 packages. `pnpm verify` passed: Biome clean on 108 files, typecheck clean, **134/134 tests** in 17 files, **8/8 architecture tests**, build OK (web bundle 230 kB, 72 kB gzip) and "demo output matches golden file ✔".
 - **Ran the extra CI steps locally**:
   - `pnpm test:coverage`: 97.2% statements, 90.2% branches, 98.6% lines.
@@ -154,7 +154,7 @@ The follow-up referred to the ranked fix list below.
   1. A clean-clone run check, acting as a reviewer who follows the README literally, on Node 20 and on Node 24.
   2. A requirement-by-requirement traceability check against the code, not the docs.
   3. A staff-engineer review of architecture, tests, docs and this AI-process record.
-- It merged the three reports into a scorecard and a ranked fix list. Scores: requirements fit 9/10, code quality 8.5, testing 8.5, architecture and extensibility 7, documentation 6.5, AI-process record 6, scope discipline 4.
+- It merged the three reports into a scorecard and a ranked fix list.
 - Every fix was implemented by a Sonnet worker with a regression test that failed before the fix and passed after. The orchestrator reviewed each diff. Independent workers ran in parallel in a separate git worktree when they touched disjoint files.
 - The gate did not change: `pnpm verify` green, `pnpm bench` budgets met, assertions and budgets never loosened.
 
@@ -172,3 +172,35 @@ The follow-up referred to the ranked fix list below.
 - `pnpm verify` green: 138 tests in 17 files, 8 architecture tests and the golden demo check.
 - `pnpm bench`: "performance budgets met" (216k events/s through the bus, worst p99 17.2 µs, level-up 4.34 µs, suppressed 0.95 µs).
 - `docker compose build` OK.
+
+## 9. Session 5: Claude Code (second review and hardening)
+
+Prompts, verbatim:
+
+> rank the project again now
+
+> yes fix them all and push
+
+**Workflow:**
+
+- A fresh cold reviewer graded the public repo with no access to earlier findings.
+- A second agent cloned it and ran it end to end (Node 20 fail-fast, Node 24 verify, bench, SSE load and Docker), and checked every earlier fix with file:line evidence.
+- Fixes were then split across two Sonnet workers in separate git worktrees (server; core and web) running in parallel, cherry-picked onto main and verified, followed by this docs pass.
+
+**What was found and fixed:**
+
+- **Session tokens leaked into logs.** The SSE query string was written to request logs. A log serializer now redacts it, and a test captures the logs.
+- **Stale `read:false` on reconnect.** After read-all, replay sent frames cached with the old read flag. The cache is now keyed on read state.
+- **Wrong PvP digest wording.** "Player 'Kael' attacked you 3 more times!" appeared when Kael was not the first attacker. "More" is now used only when the same attacker also triggered the leading notification.
+- **Unsafe Docker defaults.** The image ran in development mode with an anonymous simulate endpoint and a public default internal key. It now defaults to production and refuses dev secrets, and docker compose opts into development for the local demo.
+- **Timing-unsafe key check.** The internal key was compared with `!==`. It is now compared in constant time.
+- **Dev simulate hid bus rejection.** It returned 202 when the bus rejected the event. It now returns 503.
+- **Unbounded inbox logs.** Ingestion accepted any player id. Unknown players now get 422.
+- **Inbox memory.** Rings grow on demand instead of preallocating 200 slots.
+- **Banned constructor parameter property** in the web client removed.
+- **Docs.** Test counts and CI claims were synced with the code.
+
+**Verification:**
+
+- `pnpm verify` green: 148 tests in 17 files, 8 architecture tests and the golden demo check.
+- `pnpm bench`: "performance budgets met" (208k events/s through the bus, worst p99 18.8 µs).
