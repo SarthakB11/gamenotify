@@ -69,12 +69,16 @@ No Node 24? Run `docker compose up --build` instead (needs only Docker). `pnpm i
 pnpm install
 pnpm build          # compiles core + server + demo and bundles the web client
 pnpm demo           # console walkthrough of the brief's example triggers (no HTTP)
-pnpm start          # server + web client on http://localhost:3000
+pnpm start          # server + web client on http://localhost:3000 (stop with Ctrl-C)
 ```
+
+Stop `pnpm start` with Ctrl-C in its terminal. Killing only the `pnpm` wrapper's PID leaves the `node` child running on port 3000.
 
 Open **http://localhost:3000** and pick a player (e.g. Aria). Open a **second tab** (or window) as another player (e.g. Kael). Use the *Simulate* panel: what one player does shows up as a live toast in the other tab, typically within tens of milliseconds.
 
 **Docker:**
+
+The Dockerfile uses `RUN --mount=type=cache`, so a plain `docker build` needs BuildKit. Use `docker compose` or `docker buildx build`.
 
 ```bash
 docker compose up --build      # http://localhost:3000 (demo mode: NODE_ENV=development)
@@ -191,6 +195,17 @@ test/golden/       expected demo output (acceptance test)
 | `POST` | `/v1/events` | Ingestion for real producers (`x-internal-key`). Returns 202, 422 for player ids not in the directory, or 503 + `Retry-After` under back-pressure |
 | `POST` | `/v1/dev/simulate` | `{ "action": "playerLeveledUp", "args": [1, 15] }`, mirroring the brief |
 | `GET` | `/healthz` · `/readyz` · `/metrics` | Ops |
+
+Example producer request (`eventId` is optional and doubles as the idempotency key; `occurredAt` is optional epoch milliseconds):
+
+```bash
+curl -i -X POST http://localhost:3000/v1/events \
+  -H 'content-type: application/json' -H 'x-internal-key: dev-internal-key' \
+  -d '{"kind":"game.player_leveled_up","eventId":"evt-1001","playerId":1,"newLevel":15}'
+# HTTP/1.1 202 Accepted   {"accepted":true,"eventId":"evt-1001"}
+```
+
+`dev-internal-key` is the development default only; production refuses it. Valid `kind` values are in `apps/server/src/http/schemas.ts`.
 
 Errors use RFC 9457 Problem Details. Configuration is done with env vars (see `.env.example` and LLD §8).
 
