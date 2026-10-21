@@ -134,6 +134,7 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
     resolvers,
     stages,
     emissionStages,
+    digestStages: [preferenceStage],
     grouping,
     renderer,
     inbox,

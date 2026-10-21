@@ -443,13 +443,13 @@ The orchestrator. It subscribes to the bus once (`subscribeAll`) and runs the pi
 ```ts
 export class NotificationDispatcher {
   constructor(deps: {
-    resolvers: ResolverRegistry; pre: PipelineStage[]; post: PipelineStage[]; grouping: GroupingStage;
+    resolvers: ResolverRegistry; pre: PipelineStage[]; post: PipelineStage[]; digest: PipelineStage[]; grouping: GroupingStage;
     renderer: NotificationRenderer; inbox: InboxRepository; delivery: DeliveryRouter;
     prefs: PreferenceRepository; clock: Clock; metrics: Metrics; log: Logger;
   }) { ... }
 
   start(bus: EventSubscriber): () => void {
-    this.grouping.onFlush((intent, mode) => this.#finish(intent, mode)); // trailing group path
+    this.grouping.onFlush((intent, mode) => this.#emitDigest(intent, mode)); // trailing group path
     return bus.subscribeAll(e => this.handle(e));
   }
 
@@ -468,6 +468,14 @@ export class NotificationDispatcher {
       await this.#finish(intent, ctx.mode);
     }
     this.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1e3);
+  }
+
+  #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {      // trailing group path
+    const ctx: StageContext = { intent, prefs: this.prefs.get(intent.recipientId), mode, now: this.clock.now() };
+    const verdict = runStages(this.digest, ctx);                   // preferences again: they may have changed during the window
+    if (verdict.kind === 'suppress') { this.#suppressed(intent, verdict.reason); return; }
+    runStages(this.post, ctx);                                     // rate limit
+    this.#finish(intent, ctx.mode);
   }
 
   #finish(intent: NotificationIntent, mode: DeliveryMode): void {
@@ -522,6 +530,8 @@ The rarity gate sits in the resolver, not the preference stage. It is a **produc
 ### 5.4 Pipeline stages (Chain of Responsibility)
 
 Idempotency and preferences run before grouping (`pre`). The rate limiter runs after it (`post`), so events that grouping holds back never consume tokens. Only the leading-edge intent and each digest do.
+
+A digest is emitted up to `Wmax` after its events were held, so the dispatcher re-evaluates preferences (`digest` stages) and then the rate limit when it flushes. A category or type disabled during the window means the digest is never created. A mute or quiet hours starting during the window stores it as SILENT.
 
 ```ts
 export type Verdict = { kind: 'continue' } | { kind: 'suppress'; reason: SuppressionReason };
@@ -925,7 +935,7 @@ export function buildCore(cfg: Config, ports: { sender: NotificationSender; log:
   const renderer  = new NotificationRenderer(EN_CATALOG, directory, catalog, new NotificationFactory(ids, clock));
   const delivery  = new DeliveryRouter({ channels: [new InAppChannel(ports.sender)], retry: cfg.retry,
                                          dlq: new InMemoryDeadLetterQueue(1_000), prefs, clock, metrics: ports.metrics });
-  const dispatcher = new NotificationDispatcher({ resolvers, pre, post, grouping, renderer, inbox, delivery, prefs, clock, metrics: ports.metrics, log: ports.log });
+  const dispatcher = new NotificationDispatcher({ resolvers, pre, post, digest: [preferences], grouping, renderer, inbox, delivery, prefs, clock, metrics: ports.metrics, log: ports.log });
   const stop = dispatcher.start(bus);
 
   return {

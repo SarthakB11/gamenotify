@@ -42,6 +42,8 @@ export interface DispatcherDeps {
   readonly stages: readonly PipelineStage[];
   /** Run only on what is actually emitted, after grouping: the leading-edge intent and each digest (rate limit). */
   readonly emissionStages: readonly PipelineStage[];
+  /** Re-run when a digest is emitted, so preference changes made during the window apply to it. */
+  readonly digestStages: readonly PipelineStage[];
   readonly grouping: GroupingStage;
   readonly renderer: NotificationRenderer;
   readonly inbox: InboxRepository;
@@ -118,10 +120,15 @@ export class NotificationDispatcher {
     while (this.#inflight.size > 0) await Promise.allSettled([...this.#inflight]);
   }
 
-  /** Trailing digest: it is emitted, so it spends a rate-limit token like any other live notification. */
+  /** Trailing digest: preferences may have changed since the burst began, so they are evaluated again. */
   #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {
     const d = this.#d;
     const ctx: StageContext = { intent, prefs: d.prefs.get(intent.recipientId), mode, now: d.clock.now() };
+    const verdict = runStages(d.digestStages, ctx);
+    if (verdict.kind === 'suppress') {
+      this.#suppressed(intent.sourceEventId, intent.recipientId, intent.type, verdict.reason);
+      return;
+    }
     runStages(d.emissionStages, ctx);
     this.#finish(intent, ctx.mode);
   }

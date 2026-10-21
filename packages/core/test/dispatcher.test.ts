@@ -87,6 +87,29 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(sender.sent).toHaveLength(3);
   });
 
+  it('a digest respects preferences changed during the window: disabled category is never created', async () => {
+    const { core, sender, scheduler, suppressed } = makeCore();
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    core.preferences.patch(PlayerId(1), { categories: { SOCIAL: false } });
+    scheduler.advance(10_000);
+    await core.settle();
+    expect(sender.messages()).toEqual(["Player 'Bram' started following you."]);
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(1);
+    expect(suppressed.map((s) => s.reason)).toContain('CATEGORY_DISABLED');
+  });
+
+  it('a digest respects a mute started during the window: stored SILENT, not pushed', async () => {
+    const { core, sender, scheduler } = makeCore();
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    core.preferences.patch(PlayerId(1), { muteForMinutes: 30 });
+    scheduler.advance(10_000);
+    await core.settle();
+    expect(sender.sent).toHaveLength(1);
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries.map((e) => e.mode)).toEqual(['SILENT', 'LIVE']);
+  });
+
   it('graceful shutdown flushes open groups', async () => {
     const { core, sender } = makeCore();
     core.socialSystem.playerFollowed(2, 1);
