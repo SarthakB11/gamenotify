@@ -48,16 +48,21 @@ export class SseConnection {
     return this.#queue.length;
   }
 
-  /** Deliver a notification frame (ordered by seq, de-duplicated against replay). */
-  deliver(seq: number, frame: string): void {
-    if (this.#state === 'CLOSED') return;
+  /**
+   * Deliver a notification frame (ordered by seq, de-duplicated against replay).
+   * Returns true only if the frame was written to the socket now. A frame parked during the handshake or queued
+   * behind back-pressure (or dropped with a slow-consumer eviction) returns false: it is not delivered yet, and
+   * the client gets it from the next replay if the connection does not live to flush it.
+   */
+  deliver(seq: number, frame: string): boolean {
+    if (this.#state === 'CLOSED') return false;
     if (this.#state === 'BUFFERING') {
       this.#pending.push({ seq, frame });
-      return;
+      return false;
     }
-    if (seq <= this.lastSeq) return;
+    if (seq <= this.lastSeq) return false;
     this.lastSeq = seq;
-    this.write(frame);
+    return this.write(frame);
   }
 
   /** End of handshake: flush frames that arrived during replay, skipping any the replay already sent. */
@@ -69,16 +74,19 @@ export class SseConnection {
     this.#pending.length = 0;
   }
 
-  /** Raw write with back-pressure handling and per-tick write coalescing (cork/uncork). */
-  write(chunk: string): void {
-    if (this.#state === 'CLOSED') return;
+  /**
+   * Raw write with back-pressure handling and per-tick write coalescing (cork/uncork).
+   * Returns true if the chunk went to the socket, false if it was queued, rejected as slow-consumer or closed.
+   */
+  write(chunk: string): boolean {
+    if (this.#state === 'CLOSED') return false;
     if (this.#queue.length > 0 || this.#res.writableNeedDrain) {
       if (this.#queue.length >= this.#maxQueued) {
         this.close('slow_consumer');
-        return;
+        return false;
       }
       this.#queue.push(chunk);
-      return;
+      return false;
     }
     if (!this.#corked) {
       this.#corked = true;
@@ -87,6 +95,7 @@ export class SseConnection {
     }
     this.#res.write(chunk);
     this.lastWriteAt = this.#now();
+    return true;
   }
 
   close(reason?: string): void {

@@ -73,7 +73,13 @@ export class ConnectionRegistry {
   }
 }
 
-/** The NotificationSender port implemented over SSE: serialize once, write to every device of the player. */
+/**
+ * The NotificationSender port implemented over SSE: serialize once, write to every device of the player.
+ * DELIVERED means at least one connection wrote the frame to its socket. If every connection only buffered it
+ * (handshake replay in progress, or queued behind back-pressure) or evicted itself as a slow consumer, nothing
+ * has reached a client yet, so the result is RECIPIENT_OFFLINE: not a failure (no retry, no DLQ), the entry stays
+ * in the inbox unmarked and the client receives it from the replay on its next (re)connect.
+ */
 export class SseNotificationSender implements NotificationSender {
   readonly name = 'sse';
   readonly #registry: ConnectionRegistry;
@@ -88,7 +94,8 @@ export class SseNotificationSender implements NotificationSender {
     const conns = this.#registry.get(entry.notification.recipientId);
     if (conns === undefined || conns.size === 0) return 'RECIPIENT_OFFLINE';
     const frame = notificationFrame(this.#epoch, entry);
-    for (const c of conns) c.deliver(entry.seq, frame);
-    return 'DELIVERED';
+    let written = false;
+    for (const c of conns) if (c.deliver(entry.seq, frame)) written = true;
+    return written ? 'DELIVERED' : 'RECIPIENT_OFFLINE';
   }
 }

@@ -863,7 +863,7 @@ write(frame: string): void {
 **`SseNotificationSender.send(entry)`:**
 
 - `conns = registry.get(recipientId)`. If there are none, return `RECIPIENT_OFFLINE`.
-- Otherwise build the frame once, then `conns.forEach(c => c.write(frame))`, and return `DELIVERED`. The `DeliveryRouter` then records the push with `inbox.markDelivered(recipientId, seq, now)`; the sender never touches the entry.
+- Otherwise build the frame once and offer it to each connection (`c.deliver(seq, frame)`). Return `DELIVERED` only if at least one connection wrote the frame to its socket. A frame that was only parked (handshake replay in progress) or queued behind back-pressure, or whose connection was evicted as a slow consumer, has not reached a client, so the result is `RECIPIENT_OFFLINE`: no retry and no dead letter, because the entry is in the inbox and the next replay delivers it. On `DELIVERED` the `DeliveryRouter` records the push with `inbox.markDelivered(recipientId, seq, now)`; the sender never touches the entry.
 
 It is synchronous apart from the `Promise` wrapper, which is what keeps live delivery ordered (§5.2).
 

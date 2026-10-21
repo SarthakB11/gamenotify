@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
 import type { ServerResponse } from 'node:http';
-import { PlayerId } from '@gamenotify/core';
+import { type InboxEntry, PlayerId } from '@gamenotify/core';
+import { MemoryMetrics } from '@gamenotify/core/testing';
 import { describe, expect, it } from 'vitest';
 import { DevAuthenticator, readCookie } from '../src/auth/dev-auth.ts';
 import { StreamTicketStore } from '../src/auth/stream-tickets.ts';
 import { loadConfig } from '../src/config.ts';
+import { ConnectionRegistry, SseNotificationSender } from '../src/sse/connection-registry.ts';
 import { controlFrame, parseCursor } from '../src/sse/frame.ts';
 import { SseConnection } from '../src/sse/sse-connection.ts';
 
@@ -71,6 +73,76 @@ describe('SseConnection', () => {
     c.deliver(6, 'f');
     c.write('g');
     expect(res.chunks).toEqual(['a', 'b']);
+  });
+});
+
+describe('SseNotificationSender', () => {
+  const entry = (seq: number) =>
+    ({
+      seq,
+      mode: 'LIVE',
+      readAt: null,
+      notification: {
+        recipientId: PlayerId(1),
+        toJSON: () => ({
+          id: `n${seq}`,
+          recipientId: 1,
+          type: 'LEVEL_UP',
+          category: 'PROGRESSION',
+          priority: 1,
+          title: 't',
+          message: 'm',
+          data: {},
+          sourceEventId: 'e',
+          groupKey: null,
+          groupCount: 1,
+          createdAt: '1970-01-01T00:00:00.000Z',
+        }),
+      },
+    }) as unknown as InboxEntry;
+  const setup = (maxQueued = 1) => {
+    const registry = new ConnectionRegistry(5, new MemoryMetrics());
+    const sender = new SseNotificationSender(registry, 'ep');
+    const res = new FakeRes();
+    const c = conn(res, maxQueued);
+    registry.add(c);
+    return { sender, res, c };
+  };
+
+  it('reports DELIVERED only when a frame was written to a socket', () => {
+    const { sender, res, c } = setup();
+    expect(sender.send(entry(1))).toBe('RECIPIENT_OFFLINE'); // parked during the handshake
+    c.goLive();
+    expect(res.chunks).toHaveLength(1);
+    expect(sender.send(entry(2))).toBe('DELIVERED');
+    expect(res.chunks).toHaveLength(2);
+  });
+
+  it('does not report DELIVERED for a frame queued behind back-pressure or a slow-consumer eviction', () => {
+    const { sender, res, c } = setup(1);
+    c.goLive();
+    res.writableNeedDrain = true;
+    expect(sender.send(entry(1))).toBe('RECIPIENT_OFFLINE'); // queued
+    expect(c.queued).toBe(1);
+    expect(sender.send(entry(2))).toBe('RECIPIENT_OFFLINE'); // over the cap: evicted
+    expect(c.state).toBe('CLOSED');
+    expect(res.chunks).toEqual([]);
+  });
+
+  it('is DELIVERED if any device accepted the write even when another is evicted', () => {
+    const registry = new ConnectionRegistry(5, new MemoryMetrics());
+    const sender = new SseNotificationSender(registry, 'ep');
+    const slow = new FakeRes();
+    const fast = new FakeRes();
+    const a = conn(slow, 1);
+    const b = conn(fast, 1);
+    registry.add(a);
+    registry.add(b);
+    a.goLive();
+    b.goLive();
+    slow.writableNeedDrain = true;
+    expect(sender.send(entry(1))).toBe('DELIVERED');
+    expect(fast.chunks).toHaveLength(1);
   });
 });
 
