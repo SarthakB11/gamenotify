@@ -82,7 +82,7 @@ function Dashboard({ session, players, onLogout }: { session: Session; players: 
     setToasts((t) => [...t.slice(-3), { key, entry }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.key !== key)), 5_000);
   }, []);
-  const { entries, status, markLocal } = useNotificationStream(api, session.token, onLive);
+  const { entries, status, markLocal } = useNotificationStream(api, onLive);
   const unread = entries.filter((e) => !e.read).length;
 
   return (

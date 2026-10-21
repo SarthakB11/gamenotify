@@ -41,15 +41,10 @@ export class DevAuthenticator {
     }
   }
 
-  /**
-   * Bearer token (services, tests, per-tab web sessions) → `?token=` on the SSE route only
-   * (EventSource cannot set headers) → session cookie.
-   */
+  /** Bearer token (services, tests, per-tab web sessions) → session cookie. The SSE route also takes a stream ticket. */
   authenticate(req: FastifyRequest): PlayerId | null {
     const auth = req.headers.authorization;
     if (auth?.startsWith('Bearer ')) return this.verify(auth.slice(7));
-    const q = (req.query as { token?: unknown } | undefined)?.token;
-    if (typeof q === 'string' && req.url.startsWith('/v1/stream')) return this.verify(q);
     return this.verify(readCookie(req.headers.cookie, SESSION_COOKIE));
   }
 

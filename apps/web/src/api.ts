@@ -77,6 +77,7 @@ export class Api {
   players = () => this.call<Player[]>('/v1/players');
   login = (playerId: number) =>
     this.call<{ token: string; displayName: string }>('/v1/dev/login', { method: 'POST', json: { playerId } });
+  streamTicket = () => this.call<{ ticket: string; expiresInMs: number }>('/v1/stream/ticket', { method: 'POST' });
   inbox = () => this.call<{ epoch: string; entries: Entry[]; unread: number }>('/v1/notifications?limit=50');
   markRead = (id: string) => this.call<void>(`/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
   markAllRead = () => this.call<{ marked: number }>('/v1/notifications/read-all', { method: 'POST', json: {} });

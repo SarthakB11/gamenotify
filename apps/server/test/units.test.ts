@@ -3,6 +3,7 @@ import type { ServerResponse } from 'node:http';
 import { PlayerId } from '@gamenotify/core';
 import { describe, expect, it } from 'vitest';
 import { DevAuthenticator, readCookie } from '../src/auth/dev-auth.ts';
+import { StreamTicketStore } from '../src/auth/stream-tickets.ts';
 import { loadConfig } from '../src/config.ts';
 import { controlFrame, parseCursor } from '../src/sse/frame.ts';
 import { SseConnection } from '../src/sse/sse-connection.ts';
@@ -133,5 +134,29 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...ok, INTERNAL_API_KEY: 'short' })).toThrow(/INTERNAL_API_KEY.*at least/);
     // Development keeps the convenient defaults.
     expect(loadConfig({ NODE_ENV: 'development' }).internalApiKey).toBe('dev-internal-key');
+  });
+});
+
+describe('StreamTicketStore', () => {
+  it('is single-use, expires and stays bounded', () => {
+    let now = 0;
+    const store = new StreamTicketStore(1_000, 3, () => now);
+    const p = PlayerId(1);
+    const t = store.issue(p) as string;
+    expect(store.consume(t)).toBe(p);
+    expect(store.consume(t)).toBeNull();
+    expect(store.size).toBe(0);
+
+    const a = store.issue(p) as string;
+    store.issue(p);
+    store.issue(p);
+    expect(store.issue(p)).toBeNull(); // full of live tickets
+    now = 1_001;
+    expect(store.consume(a)).toBeNull(); // expired
+    expect(store.issue(p)).not.toBeNull();
+    expect(store.issue(p)).not.toBeNull();
+    expect(store.issue(p)).not.toBeNull(); // the full map was swept of expired tickets
+    expect(store.size).toBe(3);
+    expect(store.issue(p)).toBeNull();
   });
 });

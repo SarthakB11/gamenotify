@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { api, login, openStream, sleep, startApp } from './support.ts';
+import type { AppOptions } from '../src/app.ts';
+import { api, login, openStream, openTicketStream, sleep, startApp, streamTicket } from './support.ts';
 
 let stop: (() => Promise<void>) | undefined;
 afterEach(async () => {
@@ -7,8 +8,8 @@ afterEach(async () => {
   stop = undefined;
 });
 
-const setup = async (env: Record<string, string> = {}) => {
-  const s = await startApp(env);
+const setup = async (env: Record<string, string> = {}, options: AppOptions = {}) => {
+  const s = await startApp(env, options);
   stop = s.stop;
   const internal = (path: string, json: unknown) =>
     api(s.base)(path, { method: 'POST', json, headers: { 'x-internal-key': 'dev-internal-key' } });
@@ -165,5 +166,88 @@ describe('GET /v1/stream (SSE gateway)', () => {
     await again.waitFor((e) => e.some((x) => x.event === 'notification'));
     expect(again.notifications()[0]).toMatchObject({ seq: 1, read: true });
     again.close();
+  });
+});
+
+describe('stream tickets', () => {
+  it('issuing a ticket requires authentication', async () => {
+    const { base } = await setup();
+    expect((await api(base)('/v1/stream/ticket', { method: 'POST' })).status).toBe(401);
+    expect((await api(base, 'forged.token')('/v1/stream/ticket', { method: 'POST' })).status).toBe(401);
+  });
+
+  it('a ticket opens the stream once; a second use is 401', async () => {
+    const { base } = await setup();
+    const ticket = await streamTicket(base, await login(base, 1));
+    const first = await openTicketStream(base, ticket);
+    expect(first.status).toBe(200);
+    await first.waitFor((e) => e.some((x) => x.event === 'hello'));
+    first.close();
+    const second = await fetch(`${base}/v1/stream?ticket=${ticket}`);
+    expect(second.status).toBe(401);
+  });
+
+  it('is bound to the player it was issued for', async () => {
+    const { base, simulate } = await setup();
+    const kael = await login(base, 2);
+    const s = await openTicketStream(base, await streamTicket(base, kael));
+    await s.waitFor((e) => e.some((x) => x.event === 'hello'));
+    await simulate(kael, 'playerLeveledUp', [2, 5]);
+    await s.waitFor((e) => e.some((x) => x.event === 'notification'));
+    expect(s.notifications()[0].notification.recipientId).toBe(2);
+    s.close();
+  });
+
+  it('an unknown or malformed ticket is 401, even with a valid Bearer header', async () => {
+    const { base } = await setup();
+    const token = await login(base, 1);
+    expect((await fetch(`${base}/v1/stream?ticket=nope`)).status).toBe(401);
+    expect((await fetch(`${base}/v1/stream?ticket=a&ticket=b`)).status).toBe(401);
+    expect((await fetch(`${base}/v1/stream?ticket=nope`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+  });
+
+  it('an expired ticket is 401', async () => {
+    let now = 1_000_000;
+    const { base } = await setup({}, { now: () => now, streamTicketTtlMs: 30_000 });
+    const ticket = await streamTicket(base, await login(base, 1));
+    now += 30_001;
+    expect((await fetch(`${base}/v1/stream?ticket=${ticket}`)).status).toBe(401);
+  });
+
+  it('?token= on the stream route is no longer accepted', async () => {
+    const { base } = await setup();
+    const token = await login(base, 1);
+    expect((await fetch(`${base}/v1/stream?token=${token}`)).status).toBe(401);
+  });
+
+  it('the Authorization header still opens the stream', async () => {
+    const { base } = await setup();
+    const s = await openStream(base, await login(base, 1));
+    expect(s.status).toBe(200);
+    s.close();
+  });
+
+  it('reconnecting with a fresh ticket and lastEventId replays without gaps or duplicates', async () => {
+    const { base, simulate } = await setup();
+    const aria = await login(base, 1);
+    const first = await openTicketStream(base, await streamTicket(base, aria));
+    await first.waitFor((e) => e.some((x) => x.event === 'hello'));
+    await simulate(aria, 'playerLeveledUp', [1, 5]);
+    await first.waitFor((e) => e.some((x) => x.event === 'notification'));
+    const lastId = first.events.filter((e) => e.id).at(-1)?.id as string;
+    first.close();
+    await sleep(50);
+    for (const level of [6, 7, 8]) await simulate(aria, 'playerLeveledUp', [1, level]);
+
+    const second = await openTicketStream(base, await streamTicket(base, aria), lastId);
+    await second.waitFor((e) => e.filter((x) => x.event === 'notification').length >= 3);
+    await simulate(aria, 'playerLeveledUp', [1, 9]);
+    await second.waitFor((e) => e.filter((x) => x.event === 'notification').length >= 4);
+    const seqs = second.notifications().map((n) => n.seq as number);
+    expect(seqs).toEqual([...new Set(seqs)]);
+    expect(seqs).toEqual(Array.from({ length: seqs.length }, (_, i) => (seqs[0] as number) + i));
+    expect(second.events.some((e) => e.event === 'resync')).toBe(false);
+    expect(first.notifications().map((n) => n.seq as number)).not.toContain(seqs[0]);
+    second.close();
   });
 });

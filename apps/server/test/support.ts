@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import { buildApp } from '../src/app.ts';
+import { type AppOptions, buildApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 
 export interface SseEvent {
@@ -8,8 +8,8 @@ export interface SseEvent {
   data: unknown;
 }
 
-export const startApp = async (env: Record<string, string> = {}) => {
-  const app = await buildApp(loadConfig({ NODE_ENV: 'test', AUTH_SECRET: 'test-secret', ...env }));
+export const startApp = async (env: Record<string, string> = {}, options: AppOptions = {}) => {
+  const app = await buildApp(loadConfig({ NODE_ENV: 'test', AUTH_SECRET: 'test-secret', ...env }), options);
   await app.server.listen({ host: '127.0.0.1', port: 0 });
   const base = `http://127.0.0.1:${(app.server.server.address() as AddressInfo).port}`;
   return { app, base, stop: () => app.close() };
@@ -44,12 +44,29 @@ export const api =
     return { status: res.status, headers: res.headers, body: body as any };
   };
 
+export const streamTicket = async (base: string, token: string): Promise<string> => {
+  const r = await api(base, token)('/v1/stream/ticket', { method: 'POST' });
+  if (r.status !== 200) throw new Error(`ticket failed ${r.status}`);
+  return r.body.ticket as string;
+};
+
 /** Minimal spec-compliant SSE client over fetch streaming (same wire format EventSource consumes). */
 export const openStream = async (base: string, token: string, lastEventId?: string) => {
-  const ac = new AbortController();
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: 'text/event-stream' };
   if (lastEventId) headers['last-event-id'] = lastEventId;
-  const res = await fetch(`${base}/v1/stream`, { headers, signal: ac.signal });
+  return openStreamAt(`${base}/v1/stream`, headers);
+};
+
+/** Browser-style stream: a single-use ticket and `?lastEventId=` in the URL, no auth header. */
+export const openTicketStream = async (base: string, ticket: string, lastEventId?: string) =>
+  openStreamAt(
+    `${base}/v1/stream?ticket=${encodeURIComponent(ticket)}${lastEventId ? `&lastEventId=${encodeURIComponent(lastEventId)}` : ''}`,
+    { accept: 'text/event-stream' },
+  );
+
+const openStreamAt = async (url: string, headers: Record<string, string>) => {
+  const ac = new AbortController();
+  const res = await fetch(url, { headers, signal: ac.signal });
   const events: SseEvent[] = [];
   const comments: string[] = [];
   const waiters: { pred: (e: SseEvent[]) => boolean; resolve: () => void }[] = [];

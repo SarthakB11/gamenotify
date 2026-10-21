@@ -18,6 +18,7 @@ import {
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { collectDefaultMetrics, Registry } from 'prom-client';
 import { DevAuthenticator } from './auth/dev-auth.ts';
+import { StreamTicketStore } from './auth/stream-tickets.ts';
 import type { ServerConfig } from './config.ts';
 import { problem } from './http/problem.ts';
 import {
@@ -53,10 +54,14 @@ declare module 'fastify' {
 export interface AppOptions {
   /** Where log lines go (default: stdout). Tests capture it to assert on what is logged. */
   readonly logStream?: { write(line: string): void };
+  /** Stream ticket lifetime (default 30 s). */
+  readonly streamTicketTtlMs?: number;
+  /** Clock for ticket expiry (default `Date.now`). */
+  readonly now?: () => number;
 }
 
-/** Session tokens ride in `?token=` on the SSE route (EventSource cannot set headers); never log them. */
-export const redactUrl = (url: string): string => url.replace(/([?&]token=)[^&#]*/gi, '$1[redacted]');
+/** Stream tickets ride in `?ticket=` (EventSource cannot set headers), and a stray `?token=` must not leak either; never log them. */
+export const redactUrl = (url: string): string => url.replace(/([?&](?:token|ticket)=)[^&#]*/gi, '$1[redacted]');
 
 /** Constant-time string equality: hash both sides so unequal lengths neither throw nor leak. */
 const safeEqual = (a: string, b: string): boolean =>
@@ -120,7 +125,8 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     { sender: new SseNotificationSender(registry, epoch), logger, metrics, inboxEpoch: epoch, directory },
     config.core,
   );
-  const auth = new DevAuthenticator(config.authSecret);
+  const auth = new DevAuthenticator(config.authSecret, options.now);
+  const tickets = new StreamTicketStore(options.streamTicketTtlMs, undefined, options.now);
   let ready = true;
   /** Set first thing on shutdown: from then on ingest is refused, so nothing is acknowledged after the core stops. */
   let closing = false;
@@ -149,6 +155,16 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   const requirePlayer = async (req: FastifyRequest, reply: FastifyReply) => {
     if (req.playerId === null) return problem(reply, 401, 'Unauthorized', 'Log in via POST /v1/dev/login');
+  };
+  /** `?ticket=` (browser) is consumed here and wins over any header; otherwise Bearer/cookie as for any route. */
+  const requireStreamAuth = async (req: FastifyRequest, reply: FastifyReply) => {
+    const ticket = (req.query as { ticket?: unknown }).ticket;
+    if (ticket !== undefined) {
+      req.playerId = typeof ticket === 'string' ? tickets.consume(ticket) : null;
+      if (req.playerId === null) return problem(reply, 401, 'Unauthorized', 'Stream ticket is invalid, expired or already used');
+      return;
+    }
+    return requirePlayer(req, reply);
   };
   const requireInternalKey = async (req: FastifyRequest, reply: FastifyReply) => {
     const given = req.headers['x-internal-key'];
@@ -203,70 +219,88 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
   });
 
   // ── Real-time stream (SSE) ─────────────────────────────────────────────────
-  server.get<{ Querystring: { lastEventId?: string } }>('/v1/stream', { preHandler: requirePlayer }, (req, reply) => {
-    const player = req.playerId as PlayerId;
-    reply.hijack();
-    const res = reply.raw;
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-store',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.socket?.setNoDelay(true);
-    res.socket?.setKeepAlive(true, 30_000);
-
-    const conn = new SseConnection({
-      playerId: player,
-      res,
-      maxQueued: config.sse.maxBufferedFrames,
-      now: systemClock.now,
-      onEvict: (c, reason) => {
-        metrics.inc('sse_evictions_total', { reason });
-        logger.warn({ playerId: c.playerId, connId: c.id, reason }, 'sse connection evicted');
-      },
-    });
-    // 1) register first (live frames are buffered), 2) replay, 3) go live — no gap, no duplicates.
-    registry.add(conn);
-    conn.write(`retry: ${config.sse.retryMs}\n\n`);
-
-    const inbox = core.inbox;
-    const lastSeq = inbox.lastSeq(player);
-    const cursor = parseCursor(req.headers['last-event-id'] ?? req.query.lastEventId);
-    const resync = (reason: string) => {
-      metrics.inc('sse_resync_total', { reason });
-      conn.write(controlFrame('resync', { reason, epoch: inbox.epoch, lastSeq }, cursorId(inbox.epoch, lastSeq)));
-      conn.lastSeq = lastSeq;
-    };
-
-    if (cursor === null) {
-      conn.write(
-        controlFrame('hello', { epoch: inbox.epoch, lastSeq, unread: inbox.unreadCount(player) }, cursorId(inbox.epoch, lastSeq)),
-      );
-      conn.lastSeq = lastSeq;
-    } else if (cursor.epoch !== inbox.epoch) {
-      resync('restart');
-    } else {
-      const r = inbox.since(player, cursor.seq, config.sse.replayLimit);
-      if (r.kind === 'resync') resync('evicted');
-      else if (r.entries.length === config.sse.replayLimit && (r.entries.at(-1)?.seq ?? 0) < lastSeq) resync('too_far_behind');
-      else {
-        for (const e of r.entries) {
-          conn.write(notificationFrame(inbox.epoch, e));
-          conn.lastSeq = e.seq;
-        }
-        if (r.entries.length > 0) metrics.inc('sse_replayed_total', {}, r.entries.length);
-        conn.lastSeq = Math.max(conn.lastSeq, cursor.seq);
-      }
+  server.post('/v1/stream/ticket', { preHandler: requirePlayer }, async (req, reply) => {
+    const ticket = tickets.issue(req.playerId as PlayerId);
+    if (ticket === null) {
+      reply.header('Retry-After', '1');
+      return problem(reply, 503, 'Too many pending stream tickets');
     }
-    conn.goLive();
-
-    req.raw.on('close', () => {
-      conn.close();
-      registry.remove(conn);
-    });
+    reply.header('Cache-Control', 'no-store');
+    return { ticket, expiresInMs: tickets.ttlMs };
   });
+
+  server.get<{ Querystring: { lastEventId?: string; ticket?: string } }>(
+    '/v1/stream',
+    { preHandler: requireStreamAuth },
+    (req, reply) => {
+      const player = req.playerId as PlayerId;
+      reply.hijack();
+      const res = reply.raw;
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.socket?.setNoDelay(true);
+      res.socket?.setKeepAlive(true, 30_000);
+
+      const conn = new SseConnection({
+        playerId: player,
+        res,
+        maxQueued: config.sse.maxBufferedFrames,
+        now: systemClock.now,
+        onEvict: (c, reason) => {
+          metrics.inc('sse_evictions_total', { reason });
+          logger.warn({ playerId: c.playerId, connId: c.id, reason }, 'sse connection evicted');
+        },
+      });
+      // 1) register first (live frames are buffered), 2) replay, 3) go live — no gap, no duplicates.
+      registry.add(conn);
+      conn.write(`retry: ${config.sse.retryMs}\n\n`);
+
+      const inbox = core.inbox;
+      const lastSeq = inbox.lastSeq(player);
+      const cursor = parseCursor(req.headers['last-event-id'] ?? req.query.lastEventId);
+      const resync = (reason: string) => {
+        metrics.inc('sse_resync_total', { reason });
+        conn.write(controlFrame('resync', { reason, epoch: inbox.epoch, lastSeq }, cursorId(inbox.epoch, lastSeq)));
+        conn.lastSeq = lastSeq;
+      };
+
+      if (cursor === null) {
+        conn.write(
+          controlFrame(
+            'hello',
+            { epoch: inbox.epoch, lastSeq, unread: inbox.unreadCount(player) },
+            cursorId(inbox.epoch, lastSeq),
+          ),
+        );
+        conn.lastSeq = lastSeq;
+      } else if (cursor.epoch !== inbox.epoch) {
+        resync('restart');
+      } else {
+        const r = inbox.since(player, cursor.seq, config.sse.replayLimit);
+        if (r.kind === 'resync') resync('evicted');
+        else if (r.entries.length === config.sse.replayLimit && (r.entries.at(-1)?.seq ?? 0) < lastSeq) resync('too_far_behind');
+        else {
+          for (const e of r.entries) {
+            conn.write(notificationFrame(inbox.epoch, e));
+            conn.lastSeq = e.seq;
+          }
+          if (r.entries.length > 0) metrics.inc('sse_replayed_total', {}, r.entries.length);
+          conn.lastSeq = Math.max(conn.lastSeq, cursor.seq);
+        }
+      }
+      conn.goLive();
+
+      req.raw.on('close', () => {
+        conn.close();
+        registry.remove(conn);
+      });
+    },
+  );
 
   // ── Inbox ──────────────────────────────────────────────────────────────────
   server.get<{ Querystring: { before?: number; limit: number } }>(

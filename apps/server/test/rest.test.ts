@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
-import { api, login, startApp } from './support.ts';
+import { api, login, startApp, streamTicket } from './support.ts';
 
 let stop: (() => Promise<void>) | undefined;
 afterEach(async () => {
@@ -333,12 +333,15 @@ describe('request logging', () => {
     try {
       const token = await login(base, 1);
       const ac = new AbortController();
-      const ok = await fetch(`${base}/v1/stream?token=${token}&lastEventId=x`, { signal: ac.signal });
+      const ticket = await streamTicket(base, token);
+      const ok = await fetch(`${base}/v1/stream?ticket=${ticket}&lastEventId=x`, { signal: ac.signal });
       expect(ok.status).toBe(200);
       ac.abort();
       // A bad token takes the error path (request completed with 401).
       const bad = await fetch(`${base}/v1/stream?token=bad.secret-token-value`);
       expect(bad.status).toBe(401);
+      const badTicket = await fetch(`${base}/v1/stream?ticket=bad-secret-ticket-value`);
+      expect(badTicket.status).toBe(401);
       await new Promise((r) => setTimeout(r, 50));
     } finally {
       await app.close();
@@ -346,8 +349,11 @@ describe('request logging', () => {
     const all = lines.join('');
     expect(all).toContain('/v1/stream');
     expect(all).not.toContain('secret-token-value');
+    expect(all).not.toContain('secret-ticket-value');
     expect(all).not.toMatch(/token=(?!\[redacted\])/);
+    expect(all).not.toMatch(/ticket=(?!\[redacted\])/);
     expect(all).toContain('token=[redacted]');
+    expect(all).toContain('ticket=[redacted]');
     expect(all).toContain('lastEventId=x');
   });
 });
