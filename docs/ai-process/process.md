@@ -59,9 +59,14 @@ The AI proposed options and defaults. These choices were the developer's, taken 
 
 **On "don't build beyond what is asked".** The brief says not to build beyond what is asked, but also welcomes additional features after the core is complete. The reasoning was that the core had to be finished and verified first, so the extras were built only after it was green.
 
-### Where the developer overrode the AI
+### Where the developer overrode or constrained the AI
 
-(to be filled from the session transcripts)
+Taken from the session transcripts; each item is something the AI proposed or was heading towards, and what the developer did instead. The choices the developer made from the AI's options (scope, extras, product semantics, budgets) are in the list above.
+
+- **Stack.** The AI's first research pass was heading towards .NET: .NET 10's built-in Server-Sent Events, bounded `Channel<T>` queues, and hand-writing dispatch because MediatR and MassTransit had gone commercial. It then asked which stack to use. The developer didn't pick from the options. They sent the AI to a reference full-stack job posting to derive the stack from evidence. That gave TypeScript / Node / React, which also matches the brief's camelCase API (`gameEngine.playerLeveledUp(1, 15)`).
+- **Assumptions as questions.** After the HLD and LLD, the AI had written its product rules into an "Assumptions" section and asked for a "go" to start building. The developer didn't approve them in bulk. They told the AI to ask the open rules as explicit questions first: item rarity, who hears about a PvP defeat, what muted means, and how bursts are grouped. Only the answers went into the code.
+- **Guard-rails on later sessions.** When handing the project to a new session, the developer told it not to change application behaviour, user-facing messages, tests or the golden file unless a check fails.
+- **Orchestrator and workers.** In the review sessions, the developer required every implementation and fix to be done by a separate, cheaper worker model (Sonnet), with the orchestrating model kept for review and judgement. Each fix had to come with a test that failed first.
 
 ## 3. Research (before design, not after)
 
