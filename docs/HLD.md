@@ -65,8 +65,8 @@ The brief asks us to focus on the core logic: **receive events → decide the no
 | ID | Quality | Target | How we verify |
 |---|---|---|---|
 | NFR-1 | Latency | Event → `send()` p99 **< 1 ms** in process (grouping windows excluded) | `mitata` micro-benchmark in CI |
-| NFR-2 | Throughput | ≥ **50k events/s** on one core (recording sender, no network I/O) | Benchmark |
-| NFR-3 | Fan-out | ≥ **10k** concurrent SSE connections per process, ≤ 400 MB RSS. Measured: 382 MB, p99 27 ms (initial 300 MB target missed and revised) | Load script (`scripts/load-sse.ts`) |
+| NFR-2 | Throughput | ≥ **50k events/s** on one core (recording sender, no network I/O) | Benchmark (`pnpm bench`, gated in CI) |
+| NFR-3 | Fan-out | ≥ **10k** concurrent SSE connections per process, ≤ 400 MB RSS. Measured: 382 MB, p99 27 ms (initial 300 MB target missed and revised) | Load script (`scripts/load-sse.ts`), run manually at 10k; not asserted in CI |
 | NFR-4 | Bounded memory | Every queue, cache and buffer has a hard capacity and an overflow policy. The inbox is bounded by the per-player cap (200 entries) times the number of known players; ring buffers grow on demand up to that cap, so quiet players cost a few slots, not the full cap | Unit tests + code review checklist |
 | NFR-5 | Reliability | At-least-once into the inbox. Duplicates suppressed by idempotency key. Per-recipient ordering preserved | Property tests (`fast-check`) |
 | NFR-6 | Maintainability | Core has **zero** framework imports. Layer rules are enforced by tooling | Architecture test in CI (ADR-008) |
@@ -90,7 +90,7 @@ The brief leaves these product points open. Each was raised as a clarifying ques
 | A6 | **Grouping** | Applies only to `NEW_FOLLOWER` and `PVP_ATTACKED`. The first event in a window is delivered **immediately** (leading edge). Later events within 10 s are collapsed into one follow-up: *"Kael and 3 others started following you."* Friend requests are never grouped because each one needs action. |
 | A7 | Rate limit | 20 live notifications per player per category per minute, using a token bucket. Notifications over the limit are **downgraded to silent**: stored in the inbox, not dropped. The limiter runs after grouping, so events held for a digest spend no tokens; only what is emitted (the leading-edge notification and the digest) does. |
 | A8 | Inbox retention | Each player keeps their last **200** notifications or **7 days**, whichever limit is hit first. A reconnect older than that window triggers a `resync`. |
-| A9 | Player and item names | Player IDs are numeric, as in the brief. Display names come from a `PlayerDirectory` port, and item names and rarity come from an `ItemCatalog` port. Both are seeded in memory. |
+| A9 | Player and item names | Player IDs are numeric, as in the brief. Display names come from a `PlayerDirectory` port, and item names and rarity come from an `ContentCatalog` port. Both are seeded in memory. |
 | A10 | Defaults | New players have every category and type **enabled**, with no quiet hours. |
 
 ---
@@ -391,7 +391,7 @@ flowchart LR
 | Integration | Fastify `inject` + real `EventSource` client | SSE handshake, replay, resync, heartbeat, back-pressure eviction, auth |
 | E2E / acceptance | Demo script snapshot | The brief's four triggers produce the exact expected messages |
 | Architecture | `architecture.test.ts` (static import scan) | Layer matrix, zero npm deps in core, no cycles, apps use the public API only |
-| Performance | mitata, SSE load script | NFR-1..3 budgets enforced in CI (bench job) |
+| Performance | mitata, SSE load script | CI enforces the NFR-1/2 bench budgets (`pnpm bench`: p99 < 1 ms, ≥ 50k events/s). NFR-3 is measured, not gated: CI runs `load:sse` at 2k connections as a smoke run that asserts nothing, and the 10k figures come from manual runs |
 
 ---
 

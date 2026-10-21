@@ -1062,7 +1062,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 
 - Matrix: Node 24 and 26 on Ubuntu.
 - Steps: `pnpm install --frozen-lockfile` → lint → typecheck → test (coverage) → arch → build → **demo golden check** (`pnpm demo | diff - test/golden/demo.txt`) → docker build.
-- A separate `bench` job runs on `main` and uploads results. It fails on more than a 2× budget breach, which is generous for noisy shared runners.
+- A separate `bench` job (after `verify`, Node 24) runs `pnpm bench`, which exits 1 when a budget is breached: worst p99 above 1 ms or end-to-end throughput below 50k events/s. The budgets themselves are generous for noisy shared runners; there is no extra 2× margin and no results upload. The job then builds and runs `scripts/load-sse.ts` at 2,000 connections, 1,000 events/s for 10 s. That script only prints delivery counts, latency percentiles and RSS and asserts nothing, so it is a smoke run, not a gate.
 
 ---
 
@@ -1173,4 +1173,4 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
 | NFR-3 memory | < 300 MB @ 10k | 382 MB @ 10k (p99 27 ms) | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
-**Test inventory:** 134 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Core line coverage is ≈ 98%.
+**Test inventory:** 148 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Core line coverage is ≈ 98%.
