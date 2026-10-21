@@ -705,7 +705,7 @@ interface PlayerLog { firstSeq: number; nextSeq: number; ring: (InboxEntry | und
   - Otherwise `start = after - firstSeq + 1`, and slicing is O(k) because the seqs are **contiguous**, so no search is needed.
 - **TTL (7 d):** expired entries are pruned lazily from the head on each `append`/`since` call, and by an hourly `unref()`'d sweep.
 - **`epoch`:** 8 hex characters from `crypto.randomUUID()` at construction. Used as the SSE id prefix `"{epoch}-{seq}"`.
-- **Memory:** 200 entries × about 0.5 KB × 100k players ≈ 10 GB, which is why HLD v2 moves the inbox to Postgres. v1 targets the demo and tests.
+- **Memory:** each player's ring starts at 8 slots and doubles up to the cap, so the bound is cap × known players (ingestion rejects unknown player ids). Worst case, 200 entries × about 0.5 KB × 100k players ≈ 10 GB, which is why HLD v2 moves the inbox to Postgres. v1 targets the demo and tests.
 
 ### 5.8 Delivery — `application/delivery/`
 
@@ -1148,7 +1148,7 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | FR-16 Read / unread | `InboxService`, REST | T-11, T-17 |
 | NFR-1/2 Latency, throughput | Bus batching, intent-first, sync stages | T-22 |
 | NFR-3 Fan-out | Serialize-once, cork, single heartbeat | T-23 |
-| NFR-4 Bounded memory | Ring buffers, LRU caps, frame caps | T-07, T-10, T-11, T-16 |
+| NFR-4 Bounded memory | Ring buffers (per-player inbox cap × known players), LRU caps, frame caps | T-07, T-10, T-11, T-16 |
 | NFR-5 Reliability/order | Inbox-first, seq, idempotency | T-06, T-13, T-15 |
 | NFR-6 Maintainability | Hexagonal layering | T-20 |
 

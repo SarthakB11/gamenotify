@@ -67,7 +67,7 @@ The brief asks us to focus on the core logic: **receive events → decide the no
 | NFR-1 | Latency | Event → `send()` p99 **< 1 ms** in process (grouping windows excluded) | `mitata` micro-benchmark in CI |
 | NFR-2 | Throughput | ≥ **50k events/s** on one core (recording sender, no network I/O) | Benchmark |
 | NFR-3 | Fan-out | ≥ **10k** concurrent SSE connections per process, ≤ 400 MB RSS. Measured: 382 MB, p99 27 ms (initial 300 MB target missed and revised) | Load script (`scripts/load-sse.ts`) |
-| NFR-4 | Bounded memory | Every queue, cache and buffer has a hard capacity and an overflow policy | Unit tests + code review checklist |
+| NFR-4 | Bounded memory | Every queue, cache and buffer has a hard capacity and an overflow policy. The inbox is bounded by the per-player cap (200 entries) times the number of known players; ring buffers grow on demand up to that cap, so quiet players cost a few slots, not the full cap | Unit tests + code review checklist |
 | NFR-5 | Reliability | At-least-once into the inbox. Duplicates suppressed by idempotency key. Per-recipient ordering preserved | Property tests (`fast-check`) |
 | NFR-6 | Maintainability | Core has **zero** framework imports. Layer rules are enforced by tooling | Architecture test in CI (ADR-008) |
 | NFR-7 | Testability | Time, IDs and I/O injected through ports. ≥ 90% line coverage on `core` | Vitest coverage gate |

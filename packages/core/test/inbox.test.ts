@@ -108,4 +108,23 @@ describe('InMemoryInbox', () => {
       ),
     );
   });
+
+  it('grows its per-player ring on demand and keeps order through growth, wraparound and eviction', () => {
+    const { inbox } = make(100);
+    for (let i = 0; i < 250; i++) inbox.append(note(1), 'LIVE');
+    const seqs = inbox.page(PlayerId(1), null, 1000).map((e) => e.seq);
+    expect(seqs).toHaveLength(100);
+    expect(seqs[0]).toBe(250);
+    expect(seqs[99]).toBe(151);
+    expect(inbox.since(PlayerId(1), 150, 1000)).toMatchObject({ kind: 'entries' });
+    expect(inbox.unreadCount(PlayerId(1))).toBe(100);
+  });
+
+  it('grows correctly when the head has advanced after TTL pruning', () => {
+    const { inbox, clock } = make(100, 10);
+    for (let i = 0; i < 6; i++) inbox.append(note(1), 'LIVE');
+    clock.advance(20);
+    for (let i = 0; i < 40; i++) inbox.append(note(1, 20), 'LIVE'); // prunes the 6 old ones, then outgrows the initial ring
+    expect(inbox.page(PlayerId(1), null, 1000).map((e) => e.seq)).toEqual(Array.from({ length: 40 }, (_, i) => 46 - i));
+  });
 });

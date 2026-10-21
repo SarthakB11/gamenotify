@@ -11,9 +11,13 @@ export interface InMemoryInboxOptions {
   readonly epoch?: string;
 }
 
+const INITIAL_SLOTS = 8;
+
 /** Per-player append-only log with contiguous seqs: slot lookup by seq is O(1) arithmetic. */
 class PlayerLog {
-  readonly ring: (InboxEntry | undefined)[];
+  /** Grows on demand (doubling) up to `capacity`, so idle or quiet players cost a few slots, not the full cap. */
+  ring: (InboxEntry | undefined)[];
+  readonly capacity: number;
   head = 0;
   size = 0;
   /** seq of the oldest retained entry (== nextSeq when empty). */
@@ -23,7 +27,21 @@ class PlayerLog {
   readonly byId = new Map<NotificationId, InboxEntry>();
 
   constructor(capacity: number) {
-    this.ring = new Array<InboxEntry | undefined>(capacity).fill(undefined);
+    this.capacity = capacity;
+    this.ring = new Array<InboxEntry | undefined>(Math.min(capacity, INITIAL_SLOTS)).fill(undefined);
+  }
+
+  /** Make room for one more entry: grow the ring, or evict the oldest once at capacity. */
+  makeRoom(): void {
+    if (this.size < this.ring.length) return;
+    if (this.ring.length >= this.capacity) {
+      this.dropOldest();
+      return;
+    }
+    const next = new Array<InboxEntry | undefined>(Math.min(this.capacity, this.ring.length * 2)).fill(undefined);
+    for (let i = 0; i < this.size; i++) next[i] = this.ring[(this.head + i) % this.ring.length];
+    this.ring = next;
+    this.head = 0;
   }
 
   at(seq: number): InboxEntry | undefined {
@@ -62,7 +80,7 @@ export class InMemoryInbox implements InboxRepository {
   append(notification: Notification, mode: DeliveryMode): InboxEntry {
     const log = this.#log(notification.recipientId, true) as PlayerLog;
     this.#prune(log);
-    if (log.size === log.ring.length) log.dropOldest();
+    log.makeRoom();
     const entry: InboxEntry = { seq: log.nextSeq++, notification, mode, deliveredAt: null, readAt: null };
     log.ring[(log.head + log.size) % log.ring.length] = entry;
     log.size++;
