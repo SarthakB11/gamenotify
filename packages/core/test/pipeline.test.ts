@@ -35,7 +35,9 @@ describe('TtlLruIdempotencyStore', () => {
   it('property: replaying any sequence never yields a second "first"', () => {
     fc.assert(
       fc.property(fc.array(fc.string({ maxLength: 3 }), { maxLength: 200 }), (keys) => {
-        const s = new TtlLruIdempotencyStore({ ttlMs: 1e9, maxKeys: 1e6 }, new FakeClock(0));
+        // maxKeys only needs to exceed the 200-key bound: it sizes a ring buffer allocated per run (1e6 made each run
+        // fill a 2^20-slot array, ~2s per property under load, which tripped the 5s test timeout).
+        const s = new TtlLruIdempotencyStore({ ttlMs: 1e9, maxKeys: 1_024 }, new FakeClock(0));
         const firsts = keys.filter((k) => s.firstSeen(k));
         expect(new Set(firsts).size).toBe(firsts.length);
         expect(new Set(firsts)).toEqual(new Set(keys));
