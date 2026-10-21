@@ -245,3 +245,27 @@ Prompts, verbatim:
 
 - `pnpm verify` green: 173 tests in 17 files, 8 architecture tests and the golden demo.
 - `pnpm bench`: budgets met (188k events/s through the bus, worst p99 21.1 µs).
+
+## 11. Session 7: Claude Code (fourth review)
+
+Prompts, verbatim:
+
+> rank the project again
+
+> yes do all steps
+
+**Workflow and findings:**
+
+- A fresh cold reviewer found no correctness bugs on the core path (8.3/10), and a clean-clone run found one intermittent failure. Two Sonnet workers fixed the findings in parallel git worktrees.
+- **Found and fixed:**
+  - A property test sized its idempotency store at 1e6 keys, which allocated a 2^20-slot ring on every run. Under parallel load it hit vitest's 5 s timeout and failed 1 of 8 fresh runs. It is now sized to its input bound and takes about 11 ms, with 200/200 runs and 10 consecutive full suites green.
+  - A throw while emitting a timer-driven digest could crash the process. It is now contained, logged and counted.
+  - One player could exhaust the global stream-ticket store. There is now a per-player cap of 5; the oldest ticket is evicted, so reconnect still works.
+  - The SSE sender reported DELIVERED for frames that were only buffered. It now reports DELIVERED only when the frame was written to a socket, and otherwise leaves it for replay.
+- **Docs:** ticket-based reconnect is described accurately (no "automatic reconnect for free"), the README has a full API table and concrete buildx and production `docker run` commands, bench numbers are labelled as quiet-machine with a loaded-machine figure, and line counts were re-measured.
+- **A mistake worth recording:** the orchestrator's instruction to the docs worker wrongly claimed the dev simulate route needs a session token. The worker flagged the mismatch with the code, and the docs were corrected to match the code.
+
+**Verification:**
+
+- `pnpm verify` green three times in a row: 178 tests, 8 architecture tests and the golden demo.
+- `pnpm bench`: budgets met (~198k events/s through the bus, worst p99 13.8 µs).
