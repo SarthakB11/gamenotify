@@ -27,7 +27,9 @@ export class DevAuthenticator {
 
   verify(token: string | undefined): PlayerId | null {
     if (!token) return null;
-    const [payload, sig] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payload, sig] = parts;
     if (!payload || !sig) return null;
     const expected = Buffer.from(this.#sign(payload));
     const given = Buffer.from(sig);

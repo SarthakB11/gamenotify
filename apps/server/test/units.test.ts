@@ -101,6 +101,12 @@ describe('DevAuthenticator', () => {
     expect(a.verify(t)).toBeNull();
     expect(a.cookie('tok', true)).toContain('Secure');
   });
+  it('rejects tokens with extra dot-separated segments', () => {
+    const a = new DevAuthenticator('s', () => 0);
+    const t = a.issue(PlayerId(7));
+    expect(a.verify(`${t}.junk`)).toBeNull();
+    expect(a.verify(`${t}.`)).toBeNull();
+  });
   it('reads cookies', () => {
     expect(readCookie('a=1; gid=xyz; b=2', 'gid')).toBe('xyz');
     expect(readCookie(undefined, 'gid')).toBeUndefined();
