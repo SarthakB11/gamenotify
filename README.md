@@ -143,7 +143,8 @@ test/golden/       expected demo output (acceptance test)
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/v1/dev/login` | `{ playerId }` → session cookie + bearer token (dev only) |
-| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `resync`. Honours `Last-Event-ID` |
+| `POST` | `/v1/stream/ticket` | Bearer → `{ ticket, expiresInMs }`: a 30 s single-use ticket for the stream URL |
+| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `resync`. Auth: `?ticket=` (browsers) or `Authorization: Bearer`. Honours `Last-Event-ID` and `?lastEventId=` |
 | `GET` | `/v1/notifications?before=&limit=` | Inbox page, newest first |
 | `POST` | `/v1/notifications/:id/read` · `/v1/notifications/read-all` | Read receipts |
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |

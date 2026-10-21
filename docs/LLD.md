@@ -875,7 +875,8 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 |---|---|---|---|---|
 | `POST /v1/dev/login` | none (dev only) | `{ playerId }` | `204` + `Set-Cookie: gid` | Disabled when `NODE_ENV=production` |
 | `GET /v1/me` | cookie | — | `{ playerId, displayName, unread }` | |
-| `GET /v1/stream` | cookie | `Last-Event-ID` | `text/event-stream` | §6.3 |
+| `POST /v1/stream/ticket` | Bearer or cookie | — | `{ ticket, expiresInMs }` | §6.5 |
+| `GET /v1/stream` | `?ticket=`, Bearer or cookie | `Last-Event-ID` or `?lastEventId=` | `text/event-stream` | §6.3 |
 | `GET /v1/notifications` | cookie | `?before=<seq>&limit=1..100` (default 50) | `{ epoch, entries[], nextBefore, unread }` | Newest first |
 | `POST /v1/notifications/:id/read` | cookie | — | `204` / `404` | Idempotent |
 | `POST /v1/notifications/read-all` | cookie | `{ upToSeq }` | `{ marked }` | |
@@ -895,10 +896,11 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 - **Secret:** `AUTH_SECRET` env var. In dev, if it is unset, a random secret is generated at boot and a warning is logged.
 - **Token sources, in order:**
   1. `Authorization: Bearer` (services, tests, per-tab web sessions)
-  2. `?token=` on `/v1/stream` only, because `EventSource` cannot set headers
-  3. The `gid` cookie
-- **Logging:** the `req` log serializer replaces the `?token=` value with `[redacted]`, so tokens never reach the logs.
-- **Production swap:** replace `DevAuthenticator` with an OIDC/JWT verifier exposing the same `authenticate(req): PlayerId | null`. For the stream, swap `?token=` for a short-lived single-use ticket.
+  2. The `gid` cookie
+- **Stream tickets:** `EventSource` cannot set headers, and the 12 h session token must not sit in a URL (history, proxies, `Referer`). The client calls `POST /v1/stream/ticket` with its Bearer header and gets `{ ticket, expiresInMs }`: 24 random bytes (`crypto.randomBytes`), bound to the player, valid for 30 s, consumed by its first use. `GET /v1/stream?ticket=` consumes it atomically; an unknown, expired or reused ticket is `401`. `Authorization: Bearer` (or the cookie) still opens the stream for non-browser clients, and `?token=` is not accepted. Tickets live in a bounded in-memory map (`StreamTicketStore`, 10,000 entries): lookup is by the random id, expired entries are swept when the map fills, and issuing returns `503` if it is still full of live tickets.
+- **Reconnects:** a ticket cannot be replayed, so the web client closes the `EventSource` on `error`, fetches a new ticket and reopens with `?lastEventId=<last id seen>`, after an exponential backoff (0.5 s up to 10 s). The server replays from that cursor as for `Last-Event-ID`, so there are no gaps or duplicates.
+- **Logging:** the `req` log serializer replaces the `token=` and `ticket=` values with `[redacted]`.
+- **Production swap:** replace `DevAuthenticator` with an OIDC/JWT verifier exposing the same `authenticate(req): PlayerId | null`. The ticket flow stays as is. In a multi-node deployment the ticket store moves to a shared store with atomic get-and-delete (for example Redis `GETDEL`).
 
 ### 6.6 Web demo client — `apps/web/` (React 19 + Vite)
 
@@ -1173,7 +1175,7 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | Composition root | `apps/server` | `packages/core/src/composition.ts` (`buildCore`) | Shared by the server, demo, tests and benchmarks |
 | Security headers | `@fastify/helmet` | `onSend` hook | Four headers, no dependency |
 | Cookies | `@fastify/cookie` | 10-line parser | Read-only use |
-| Stream auth | Cookie | Bearer, `?token=` (stream only), or cookie | Per-tab sessions: two tabs can be two players |
+| Stream auth | Cookie | Bearer or cookie, plus a short-lived single-use `?ticket=` for the browser | Per-tab sessions: two tabs can be two players; the session token never appears in a URL |
 | Synthetic players | — | `SYNTHETIC_PLAYERS=n` env | Load testing with n distinct recipients |
 | PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
 | NFR-3 memory | < 300 MB @ 10k | 382 MB @ 10k (p99 27 ms) | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |

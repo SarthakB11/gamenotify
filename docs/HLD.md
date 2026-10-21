@@ -334,7 +334,7 @@ The first build ran at 76 µs per event. Profiling found V8 Map tombstones in th
 
 ## 10. Security and privacy
 
-- **AuthN for the stream.** `EventSource` cannot send headers, so the demo uses an HMAC-signed, short-lived token (`/v1/dev/login`) delivered as an **HttpOnly SameSite cookie**. Production would use OIDC/JWT from the platform's identity provider.
+- **AuthN for the stream.** `EventSource` cannot send headers, so the demo logs in with an HMAC-signed token (`/v1/dev/login`, also set as an **HttpOnly SameSite cookie**) and the browser exchanges it for a **30 s single-use ticket** (`POST /v1/stream/ticket`) that goes in the stream URL, so the session token is never in a URL. Production would use OIDC/JWT from the platform's identity provider.
 - **AuthZ.** A player can only stream and read their **own** inbox. The player ID comes from the token, never from the URL.
 - **Input validation.** Every external payload is validated with JSON Schema (Ajv), and unknown fields are rejected.
 - **Output safety.** Messages are plain text. Interpolated names are length-capped and control-character-stripped. The client renders text nodes, never HTML.
