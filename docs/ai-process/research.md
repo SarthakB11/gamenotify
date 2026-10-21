@@ -7,7 +7,7 @@
 | **Xbox Real-Time Activity** | Subscription model over WebSocket, with caps per session and privacy checks | Per-player connection caps; privacy noted for future cross-player subscriptions |
 | **Notification-system practice** | Check preferences before send. At-least-once delivery plus idempotency keys. Retries with backoff, then a DLQ. Per-channel queues. Centralised gateway dedup | Idempotency stage, retry/DLQ router, channel port |
 | **Notification clustering** | Time-windowed clustering by source/target, extending the window on activity | Grouping stage (we chose leading edge plus a capped sliding window) |
-| **SSE vs WebSocket vs Socket.IO** | SSE: native reconnect and Last-Event-ID, server→client only. `ws` is about 4× Socket.IO's throughput. uWS is fastest but has a different API and process-local pub/sub | SSE now (ADR-003). A WebSocket adapter is possible behind the same port |
+| **SSE vs WebSocket vs Socket.IO** | SSE: reconnect and Last-Event-ID semantics, server→client only. `ws` is about 4× Socket.IO's throughput. uWS is fastest but has a different API and process-local pub/sub | SSE now (ADR-003). A WebSocket adapter is possible behind the same port |
 | **Fastify vs Express (2026)** | Fastify is about 2–3× faster, with schema-compiled serialization and first-class TS | Fastify. A precompiled `fast-json-stringify` serializer for SSE frames |
 | **TypeScript 7 (Aug 2026)** | Native Go compiler, 8–12× faster builds. No stable compiler API until 7.1, so typescript-eslint, dependency-cruiser and others are blocked | TS 7 plus Biome. Architecture rules as a test (ADR-008) |
 | **Node.js releases** | Node 24 is Active LTS. Node 26 (May 2026) reaches LTS in late October 2026 | Runtime ≥ 24, CI matrix 24 and 26 |

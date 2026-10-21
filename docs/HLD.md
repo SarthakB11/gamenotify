@@ -254,7 +254,7 @@ Selected for a mainstream TypeScript, Node.js and React stack and current best p
 | Language | **TypeScript 7** (native `tsc`), `strict`, `erasableSyntaxOnly` | Matches the brief's camelCase API. TS 7 compiles about 10× faster. `erasableSyntaxOnly` keeps sources runnable by Node's built-in type stripping | TS 6.x (fallback if a tool breaks) |
 | Runtime | **Node.js 24 LTS** (CI also on 26) | Active LTS today. Node 26 reaches LTS in late Oct 2026 | Bun (faster cold start, less proven in their stack) |
 | HTTP | **Fastify 5** | About 2–3× Express throughput. Schema-compiled serialization. First-class TS types. Built-in `pino` | Express 5 (their stack; it is one adapter, so swapping is cheap) |
-| Real-time transport | **Server-Sent Events** (hand-rolled on Fastify) | Notifications are server→client only. Native auto-reconnect and `Last-Event-ID` give replay for free. Plain HTTP, so it is proxy- and HTTP/2-friendly | WebSocket (`ws`/uWS) when bidirectional is needed; Socket.IO (heavier, ~20 KB client) |
+| Real-time transport | **Server-Sent Events** (hand-rolled on Fastify) | Notifications are server→client only. One-way, simple framing, and `Last-Event-ID` cursor semantics (passed as `?lastEventId=` by the browser client, which reconnects itself with a fresh stream ticket). Plain HTTP, so it is proxy- and HTTP/2-friendly | WebSocket (`ws`/uWS) when bidirectional is needed; Socket.IO (heavier, ~20 KB client) |
 | Validation | **JSON Schema** at the HTTP edge (Fastify + Ajv, unknown fields rejected). Precompiled **fast-json-stringify** for SSE frames | Zero extra dependencies. Ajv-compiled validators and serializers | TypeBox, Zod 4 |
 | IDs | **UUIDv7** | Time-ordered, so it is index-friendly when the inbox moves to Postgres | ULID |
 | Logging | **pino** | Fastest structured JSON logger in Node. Fastify default | — |
@@ -415,7 +415,7 @@ The core is built first and is always shippable, so if time runs short, extras a
 |---|---|---|
 | 001 | TypeScript / Node 24, mainstream, well-supported stack | Single thread → we design for non-blocking I/O, not CPU parallelism |
 | 002 | Hexagonal core + in-process typed bus | Small indirection cost; large gain in testability and extensibility |
-| 003 | SSE over WebSocket for the live channel | No client→server messages on the stream (we use REST for those) in exchange for free reconnect and replay |
+| 003 | SSE over WebSocket for the live channel | No client→server messages on the stream (we use REST for those) in exchange for simple one-way framing and cursor-based replay (the client reconnects itself, see ADR-003) |
 | 004 | Preference check before rendering ("intent first") | Two-step model (intent → notification) in exchange for less wasted work |
 | 005 | Per-player `seq` + epoch as the SSE id | Requires a resync path after a restart, but gives exact replay |
 | 006 | Leading-edge grouping | Two messages instead of one for bursts, but the first notification is never delayed |
