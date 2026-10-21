@@ -222,3 +222,26 @@ Two Sonnet workers again ran in parallel worktrees. What was fixed:
 
 - `pnpm verify` green: 163 tests in 17 files, 8 architecture tests and the golden demo.
 - `pnpm bench`: budgets met (210k events/s, worst p99 19.4 µs).
+
+## 10. Session 6: Claude Code (third review: grader experience)
+
+Prompts, verbatim:
+
+> rank the project again with clear step to improve
+
+> start with A. in order
+
+**Workflow and findings:**
+
+- A fresh cold reviewer and a clean-clone run produced a ranked plan focused on grader experience. Two Sonnet workers fixed it in parallel git worktrees (code; docs), and the orchestrator reviewed each diff.
+- **Found and fixed in the code:**
+  - Grouping digests double-counted the leading actor ("Player 'Kael' and 1 other" when Bram had already been shown), and a repeat follower produced a second "New Followers" digest. Both fixed, with a fast-check property.
+  - A failed leading-edge event left its grouping window open. The window is now cancelled on failure.
+  - The web client replaced the inbox on `hello`, so live frames could vanish, and it toasted replayed frames. It now merges on hello, replaces on resync, and suppresses toasts for the replay burst.
+  - Dev tokens with extra segments were accepted. Exactly two segments are now required.
+- **Grader experience:** README gained a "Start here" section (the core path in 6 files) and a "Core vs extras" table, one dated benchmark set, the memory target stated as missed, a BuildKit note and a sample `POST /v1/events`. The developer's own overrides of the AI were recovered from the original session transcripts and recorded in process.md ("Where the developer overrode or constrained the AI").
+
+**Verification:**
+
+- `pnpm verify` green: 173 tests in 17 files, 8 architecture tests and the golden demo.
+- `pnpm bench`: budgets met (188k events/s through the bus, worst p99 21.1 µs).
