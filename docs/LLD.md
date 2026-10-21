@@ -446,45 +446,72 @@ The orchestrator. It subscribes to the bus once (`subscribeAll`) and runs the pi
 ```ts
 export class NotificationDispatcher {
   constructor(deps: {
-    resolvers: ResolverRegistry; pre: PipelineStage[]; post: PipelineStage[]; digest: PipelineStage[]; grouping: GroupingStage;
-    renderer: NotificationRenderer; inbox: InboxRepository; delivery: DeliveryRouter;
-    prefs: PreferenceRepository; clock: Clock; metrics: Metrics; log: Logger;
-  }) { ... }
-
-  start(bus: EventSubscriber): () => void {
-    this.grouping.onFlush((intent) => this.#emitDigest(intent)); // trailing group path
-    return bus.subscribeAll(e => this.handle(e));
+    resolvers: ResolverRegistry; stages: PipelineStage[]; emissionStages: PipelineStage[]; digestStages: PipelineStage[];
+    grouping: GroupingStage; renderer: NotificationRenderer; inbox: InboxRepository; delivery: DeliveryRouter;
+    prefs: PreferenceRepository; clock: Clock; metrics: Metrics; logger: Logger;
+  }) {
+    deps.grouping.onFlush((intent) => this.#emitDigest(intent));  // trailing group path
   }
 
-  async handle(event: PlatformEvent): Promise<void> {
+  start(bus: EventSubscriber): Unsubscribe {
+    return bus.subscribeAll((event) => this.handle(event));
+  }
+
+  handle(event: PlatformEvent): void {                             // synchronous: delivery is started, never awaited
     const t0 = performance.now();
     this.metrics.inc('events_received_total', { kind: event.kind });
-    const intents = this.resolvers.resolve(event);                 // Strategy lookup, O(1)
-    for (const intent of intents) {
-      const ctx: StageContext = { intent, prefs: this.prefs.get(intent.recipientId),
+    for (const r of this.resolvers.resolve(event)) {               // Strategy lookup, O(1)
+      if (isSkip(r)) { this.#suppressed(event.eventId, r.recipientId, r.type, r.skip); continue; }
+      const ctx: StageContext = { intent: r, prefs: this.prefs.get(r.recipientId),
                                   mode: DeliveryMode.LIVE, now: this.clock.now() };
-      const verdict = runStages(this.pre, ctx);                    // see 5.4
-      if (verdict.kind === 'suppress') { this.#suppressed(intent, verdict.reason); continue; }
-      const g = this.grouping.offer(ctx);                          // leading-edge pass or hold
-      if (g === 'held') { this.#suppressed(intent, 'GROUPED'); continue; }
-      runStages(this.post, ctx);                                   // rate limit: only what is emitted spends tokens
-      await this.#finish(intent, ctx.mode);
+      let stored = false;                                          // once true, the dedup key must stay recorded
+      let openedGroup: string | undefined;                         // group key this leading-edge event opened
+      try {
+        const verdict = runStages(this.stages, ctx);               // idempotency, preferences; see 5.4
+        if (verdict.kind === 'suppress') { this.#suppressed(event.eventId, r.recipientId, r.type, verdict.reason); continue; }
+        if (this.grouping.offer(ctx) === 'held') { this.#suppressed(event.eventId, r.recipientId, r.type, 'GROUPED'); continue; }
+        openedGroup = r.groupKey;                                  // leading-edge pass
+        runStages(this.emissionStages, ctx);                       // rate limit: only what is emitted spends tokens
+        const entry = this.#store(r, ctx.mode);                    // render late, then at-least-once inbox append
+        stored = true;
+        this.#announce(entry, ctx.mode);                           // metrics, observers, delivery (NOT awaited)
+      } catch (error) {                                            // one recipient's failure must not drop the others
+        if (!stored) for (const s of this.stages) s.rollback?.(ctx);          // release the dedup key so a retry is processed
+        if (!stored && openedGroup !== undefined) this.grouping.cancel(openedGroup); // no orphaned group window
+        this.metrics.inc('dispatch_errors_total', { kind: event.kind });
+        this.logger.error({ err: error, eventId: event.eventId, playerId: r.recipientId }, 'dispatch failed; will accept a retry');
+      }
     }
     this.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1e3);
   }
 
-  #emitDigest(intent: NotificationIntent, mode: DeliveryMode): void {      // trailing group path
-    const ctx: StageContext = { intent, prefs: this.prefs.get(intent.recipientId), mode, now: this.clock.now() };
-    const verdict = runStages(this.digest, ctx);                   // preferences again: they may have changed during the window
-    if (verdict.kind === 'suppress') { this.#suppressed(intent, verdict.reason); return; }
-    runStages(this.post, ctx);                                     // rate limit
-    this.#finish(intent, ctx.mode);
+  #emitDigest(intent: NotificationIntent): void {                  // trailing group path, from a scheduler timer
+    try {                                                          // must not throw: nothing above it to catch
+      const ctx: StageContext = { intent, prefs: this.prefs.get(intent.recipientId),
+                                  mode: DeliveryMode.LIVE, now: this.clock.now() };
+      const verdict = runStages(this.digestStages, ctx);           // preferences again; they set the mode at emission:
+      if (verdict.kind === 'suppress') {                           // disabled -> never created, muted/quiet -> SILENT
+        this.#suppressed(intent.sourceEventId, intent.recipientId, intent.type, verdict.reason); return;
+      }
+      runStages(this.emissionStages, ctx);                         // rate limit
+      this.#announce(this.#store(intent, ctx.mode), ctx.mode);
+    } catch (error) {                                              // held events were already deduplicated: nothing to roll back
+      this.metrics.inc('dispatch_errors_total', { kind: 'digest' });
+      this.logger.error({ err: error, eventId: intent.sourceEventId, playerId: intent.recipientId }, 'digest dispatch failed; dropped');
+    }
   }
 
-  #finish(intent: NotificationIntent, mode: DeliveryMode): void {
-    const notification = this.renderer.render(intent);              // render late
-    const entry = this.inbox.append(notification, mode);            // at-least-once store, seq assigned
-    if (mode === DeliveryMode.LIVE) this.#inflight.track(this.delivery.deliver(entry)); // NOT awaited
+  #store(intent: NotificationIntent, mode: DeliveryMode): InboxEntry {
+    return this.inbox.append(this.renderer.render(intent), mode);  // render late; seq assigned here
+  }
+
+  #announce(entry: InboxEntry, mode: DeliveryMode): void {
+    this.metrics.inc('notifications_created_total', { type: entry.notification.type, mode });
+    for (const o of this.#observers) o.onCreated?.(entry);
+    if (mode !== DeliveryMode.LIVE) return;                        // SILENT: stored, never pushed
+    const pending = this.delivery.deliver(entry);                  // first attempt runs synchronously
+    if (pending === undefined) return;                             // delivered synchronously: no Promise allocated
+    this.#inflight.track(pending.catch(logCrash));                 // NOT awaited
   }
 }
 ```
@@ -493,7 +520,7 @@ export class NotificationDispatcher {
 
 - The first send attempt runs synchronously up to its first `await`. The SSE sender writes to the socket synchronously, so frames still leave in `seq` order.
 - Retries run in the background. A retried frame can arrive out of order, so the client orders by `seq` and dedups by notification `id` (LLD §6.6).
-- `#inflight` is a `Set<Promise>`. Graceful shutdown awaits it after `bus.drain()` so no delivery attempt is abandoned.
+- `#inflight` is a `Set<Promise>`; `idle()` resolves once it is empty. Graceful shutdown awaits it after `bus.drain()` so no delivery attempt is abandoned.
 
 ### 5.3 Intent resolvers (Strategy + registry) — `application/resolvers/`
 
