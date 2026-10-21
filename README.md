@@ -115,6 +115,31 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 - **Burst grouping.** The first follower or attack is delivered instantly. The rest of the burst collapses into *"Player 'Kael' and 3 others started following you."*
 - **Ops:** Prometheus `/metrics`, `/healthz`, `/readyz`, structured logs, graceful shutdown, Docker health check.
 
+### Core vs extras
+
+The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript (`wc -l`, 2026-10-21):
+
+| Area | Lines | Brief or extra |
+|---|---|---|
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,809 | core package |
+| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 346 | extra |
+| of which: delivery router with retry/backoff, retry policy, dead-letter queue | 146 | extra |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,317 | core path and its plumbing |
+| `apps/demo` (console demo) | 116 | brief |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 267 | 1,199 | extra |
+| `apps/web/src` (React client) | 533 | extra |
+| `scripts/` (bench, SSE load test, golden check) | 262 | extra |
+| `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
+
+The extra stages are registered in one place, [`packages/core/src/composition.ts`](packages/core/src/composition.ts):
+
+- line 109: `IdempotencyStage` joins `PreferenceStage` in `stages`
+- lines 111 to 119: `RateLimitStage` (with `TokenBucketLimiter`) forms `emissionStages`
+- line 120: `GroupingStage` is created and passed to the dispatcher
+- lines 122 to 125: dead-letter queue and `exponentialBackoff` retry are passed to `DeliveryRouter`
+
+Reading the code (not by deleting it): the dispatcher takes `stages` and `emissionStages` as plain arrays, so removing the first two leaves the receive, resolve, preference check, render, store, send flow intact. Grouping and the delivery router are not optional stages. The dispatcher calls `grouping.offer()` unconditionally (it passes through events that carry no group key), and `DeliveryRouter` always wraps `InAppChannel`, so removing those means editing the dispatcher or router, not just the wiring. Quiet hours live inside `PreferenceStage` itself.
+
 ---
 
 ## Architecture in one picture
