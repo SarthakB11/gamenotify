@@ -43,14 +43,15 @@ export const parseCursor = (raw: unknown): { epoch: string; seq: number } | null
 };
 
 // One serialized frame per entry, shared by all of the player's connections (multi-device fan-out).
-const cache = new WeakMap<InboxEntry, string>();
+// `read` is the only field that changes after creation (false → true), so it is part of the cache key.
+const cache = new WeakMap<InboxEntry, { read: boolean; frame: string }>();
 
 export const notificationFrame = (epoch: string, entry: InboxEntry): string => {
-  let frame = cache.get(entry);
-  if (frame === undefined) {
-    frame = `id: ${cursorId(epoch, entry.seq)}\nevent: notification\ndata: ${stringifyEntry(toInboxEntryDto(entry))}\n\n`;
-    cache.set(entry, frame);
-  }
+  const read = entry.readAt !== null;
+  const hit = cache.get(entry);
+  if (hit !== undefined && hit.read === read) return hit.frame;
+  const frame = `id: ${cursorId(epoch, entry.seq)}\nevent: notification\ndata: ${stringifyEntry(toInboxEntryDto(entry))}\n\n`;
+  cache.set(entry, { read, frame });
   return frame;
 };
 

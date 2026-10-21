@@ -144,4 +144,26 @@ describe('GET /v1/stream (SSE gateway)', () => {
     a.close();
     b.close();
   });
+
+  it('replays the current read state, not the state at first serialization', async () => {
+    const { base, simulate } = await setup();
+    const aria = await login(base, 1);
+    const kael = await login(base, 3);
+    const live = await openStream(base, aria);
+    await live.waitFor((e) => e.some((x) => x.event === 'hello'));
+    await simulate(kael, 'friendRequestSent', [3, 1]);
+    await live.waitFor((e) => e.some((x) => x.event === 'notification'));
+    expect(live.notifications()[0].read).toBe(false);
+    const cursor = live.events[0]?.id as string;
+    live.close();
+
+    const readAll = await api(base, aria)('/v1/notifications/read-all', { method: 'POST', json: {} });
+    expect(readAll.body.marked).toBe(1);
+    expect((await api(base, aria)('/v1/notifications')).body.entries[0].read).toBe(true);
+
+    const again = await openStream(base, aria, cursor);
+    await again.waitFor((e) => e.some((x) => x.event === 'notification'));
+    expect(again.notifications()[0]).toMatchObject({ seq: 1, read: true });
+    again.close();
+  });
 });
