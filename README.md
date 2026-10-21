@@ -62,8 +62,10 @@ Open **http://localhost:3000** and pick a player (e.g. Aria). Open a **second ta
 **Docker:**
 
 ```bash
-docker compose up --build      # http://localhost:3000
+docker compose up --build      # http://localhost:3000 (demo mode: NODE_ENV=development)
 ```
+
+The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and refuses to start unless `AUTH_SECRET` and `INTERNAL_API_KEY` are set to private values of 16+ characters (the public `dev-internal-key` is rejected).
 
 **Everything CI runs:**
 
@@ -145,7 +147,7 @@ test/golden/       expected demo output (acceptance test)
 | `GET` | `/v1/notifications?before=&limit=` | Inbox page, newest first |
 | `POST` | `/v1/notifications/:id/read` · `/v1/notifications/read-all` | Read receipts |
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |
-| `POST` | `/v1/events` | Ingestion for real producers (`x-internal-key`). Returns 202, or 503 + `Retry-After` under back-pressure |
+| `POST` | `/v1/events` | Ingestion for real producers (`x-internal-key`). Returns 202, 422 for player ids not in the directory, or 503 + `Retry-After` under back-pressure |
 | `POST` | `/v1/dev/simulate` | `{ "action": "playerLeveledUp", "args": [1, 15] }`, mirroring the brief |
 | `GET` | `/healthz` · `/readyz` · `/metrics` | Ops |
 

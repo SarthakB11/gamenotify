@@ -876,8 +876,8 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 | `POST /v1/notifications/read-all` | cookie | `{ upToSeq }` | `{ marked }` | |
 | `GET /v1/preferences` | cookie | — | `UserPreferences` + `ETag: "v{version}"` | |
 | `PATCH /v1/preferences` | cookie | JSON Merge Patch (RFC 7396) + `If-Match` | `200` / `412` on version conflict | Validates time zone and types |
-| `POST /v1/events` | `x-internal-key` | `PlatformEvent` (`eventId` optional → generated) | `202` / `503` + `Retry-After: 1` when bus full | Ingestion for real producers |
-| `POST /v1/dev/simulate` | none (dev only) | `{ action: "playerLeveledUp", args: [1, 15], repeat? }` | `202` | Calls `GameEngine`/`SocialSystem` with the brief's exact signatures; drives the web demo |
+| `POST /v1/events` | `x-internal-key` | `PlatformEvent` (`eventId` optional → generated) | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Ingestion for real producers. Every player id in the event must exist in the directory, checked before publishing, so unknown ids cannot create inbox logs. The key is compared in constant time |
+| `POST /v1/dev/simulate` | none (dev only) | `{ action: "playerLeveledUp", args: [1, 15], repeat? }` | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Calls `GameEngine`/`SocialSystem` with the brief's exact signatures; drives the web demo |
 | `GET /v1/players` | none | — | seeded players | For the demo's player picker |
 | `GET /v1/admin/dlq` | `x-internal-key` | `?limit` | `DeadLetter[]` | |
 | `GET /healthz` · `/readyz` · `/metrics` | none | — | `200` / Prometheus text | `readyz` = 503 while draining |
@@ -892,6 +892,7 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
   1. `Authorization: Bearer` (services, tests, per-tab web sessions)
   2. `?token=` on `/v1/stream` only, because `EventSource` cannot set headers
   3. The `gid` cookie
+- **Logging:** the `req` log serializer replaces the `?token=` value with `[redacted]`, so tokens never reach the logs.
 - **Production swap:** replace `DevAuthenticator` with an OIDC/JWT verifier exposing the same `authenticate(req): PlayerId | null`. For the stream, swap `?token=` for a short-lived single-use ticket.
 
 ### 6.6 Web demo client — `apps/web/` (React 19 + Vite)
@@ -947,10 +948,10 @@ Loaded once from env vars, validated at boot (integers, enums, production-requir
 | Var | Default | Meaning |
 |---|---|---|
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | HTTP listen |
-| `NODE_ENV` | `development` | `production` disables `/v1/dev/*` |
+| `NODE_ENV` | `development` | `production` disables `/v1/dev/*`. The Docker image defaults to `production`; `docker-compose.yml` sets `development` for the demo |
 | `LOG_LEVEL` | `info` | pino level |
-| `AUTH_SECRET` | random (dev) | HMAC key; **required** in production |
-| `INTERNAL_API_KEY` | random (dev) | for `/v1/events`, `/v1/admin/*` |
+| `AUTH_SECRET` | random (dev) | HMAC key; **required** in production (16+ chars) |
+| `INTERNAL_API_KEY` | `dev-internal-key` (dev) | for `/v1/events`, `/v1/admin/*`; in production **required**, 16+ chars, and the dev default is refused at boot |
 | `BUS_CAPACITY` / `BUS_BATCH` | `65536` / `512` | Ring size (power of 2) / events per tick |
 | `DEDUP_TTL_MS` / `DEDUP_MAX_KEYS` | `600000` / `100000` | Idempotency window |
 | `RATE_CAPACITY` / `RATE_WINDOW_MS` | `20` / `60000` | Token bucket per player per category |
@@ -1022,7 +1023,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | T-15 | Integration | SSE race | Events published *during* replay are delivered exactly once, in order (handoff §6.3) |
 | T-16 | Integration | SSE back-pressure | A paused reader is evicted at `MAX_BUFFERED_FRAMES`. Others unaffected |
 | T-17 | Integration | REST | Preferences ETag/If-Match/412. Merge-patch validation. Inbox paging. Read and read-all. Problem Details shape |
-| T-18 | Integration | Ingestion | `POST /v1/events` 202. Invalid → 400. Bus full → 503 + `Retry-After` |
+| T-18 | Integration | Ingestion | `POST /v1/events` 202. Invalid → 400. Unknown player → 422. Bus full → 503 + `Retry-After` |
 | T-19 | Contract | Ports | Shared suites for `InboxRepository`, `PreferenceRepository`, `IdempotencyStore` (run against every adapter) |
 | T-20 | Architecture | `architecture.test.ts` | Layer matrix §1. No npm or Node-I/O imports in core. Apps use the public API only. No cycles. Proven by injecting a violation |
 | T-21 | E2E | Web (scripted Playwright run) | Two players in two browser contexts. A friend request appears as a toast in the other context (measured 27 ms). No console errors |
@@ -1055,7 +1056,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 
 - Multi-stage build. A `node:24-slim` build stage installs from the lockfile and manifests first (with a BuildKit cache mount) for layer caching, then runs `pnpm build` and `pnpm --filter @gamenotify/server deploy --prod`.
 - The runtime stage is `node:24-slim`, runs as a non-root user, and has a `HEALTHCHECK` on `/healthz`.
-- `docker compose up` exposes port 3000.
+- The image sets `NODE_ENV=production`, so it refuses to start without real `AUTH_SECRET` and `INTERNAL_API_KEY`. `docker compose up` sets `NODE_ENV=development` for the demo and exposes port 3000.
 
 **GitHub Actions (`ci.yml`):**
 

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
@@ -50,9 +50,48 @@ declare module 'fastify' {
   }
 }
 
-export async function buildApp(config: ServerConfig): Promise<App> {
+export interface AppOptions {
+  /** Where log lines go (default: stdout). Tests capture it to assert on what is logged. */
+  readonly logStream?: { write(line: string): void };
+}
+
+/** Session tokens ride in `?token=` on the SSE route (EventSource cannot set headers); never log them. */
+export const redactUrl = (url: string): string => url.replace(/([?&]token=)[^&#]*/gi, '$1[redacted]');
+
+/** Constant-time string equality: hash both sides so unequal lengths neither throw nor leak. */
+const safeEqual = (a: string, b: string): boolean =>
+  timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+
+/** Every player id an ingested event refers to (actors and targets). */
+const PLAYER_FIELDS = [
+  'playerId',
+  'attackerId',
+  'victimId',
+  'winnerId',
+  'loserId',
+  'senderId',
+  'recipientId',
+  'accepterId',
+  'requesterId',
+  'followerId',
+  'followeeId',
+] as const;
+
+export async function buildApp(config: ServerConfig, options: AppOptions = {}): Promise<App> {
   const server = Fastify({
-    logger: { level: config.logLevel },
+    logger: {
+      level: config.logLevel,
+      ...(options.logStream ? { stream: options.logStream } : {}),
+      serializers: {
+        req: (req: FastifyRequest) => ({
+          method: req.method,
+          url: redactUrl(req.url),
+          host: req.host,
+          remoteAddress: req.ip,
+          ...(req.socket?.remotePort !== undefined ? { remotePort: req.socket.remotePort } : {}),
+        }),
+      },
+    },
     ajv: {
       customOptions: {
         removeAdditional: false,
@@ -112,7 +151,8 @@ export async function buildApp(config: ServerConfig): Promise<App> {
     if (req.playerId === null) return problem(reply, 401, 'Unauthorized', 'Log in via POST /v1/dev/login');
   };
   const requireInternalKey = async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!config.internalApiKey || req.headers['x-internal-key'] !== config.internalApiKey) {
+    const given = req.headers['x-internal-key'];
+    if (!config.internalApiKey || typeof given !== 'string' || !safeEqual(given, config.internalApiKey)) {
       return problem(reply, 401, 'Unauthorized', 'Missing or invalid x-internal-key');
     }
   };
@@ -122,6 +162,9 @@ export async function buildApp(config: ServerConfig): Promise<App> {
       return problem(reply, 503, 'Shutting down');
     }
   };
+  /** Unbounded inbox logs are created per recipient, so only known players may be referenced. */
+  const unknownPlayer = (body: Record<string, unknown>): unknown =>
+    PLAYER_FIELDS.map((f) => body[f]).find((id) => id !== undefined && !core.directory.get(id as PlayerId));
   const devOnly = async (_req: FastifyRequest, reply: FastifyReply) => {
     if (config.env === 'production') return problem(reply, 404, 'Not Found');
   };
@@ -291,6 +334,8 @@ export async function buildApp(config: ServerConfig): Promise<App> {
         eventId: EventId(typeof body.eventId === 'string' ? body.eventId : randomUUID()),
         occurredAt: typeof body.occurredAt === 'number' ? body.occurredAt : Date.now(),
       } as unknown as PlatformEvent;
+      const unknown = unknownPlayer(body);
+      if (unknown !== undefined) return problem(reply, 422, 'Unknown player', `Player ${unknown} is not in the player directory`);
       if (core.bus.publish(event) === 'rejected') {
         reply.header('Retry-After', '1');
         return problem(reply, 503, 'Event bus at capacity');
@@ -307,10 +352,17 @@ export async function buildApp(config: ServerConfig): Promise<App> {
       const { action, args, repeat } = req.body;
       const [a, b] = args;
       const results: string[] = [];
+      const players = SIMULATE_PLAYER_ARGS[action] === 1 ? [a] : [a, b];
+      const unknown = players.find((p) => !core.directory.get(Number(p) as PlayerId));
+      if (unknown !== undefined) return problem(reply, 422, 'Unknown player', `Player ${unknown} is not in the player directory`);
       try {
         for (let i = 0; i < repeat; i++) results.push(simulate(core, action, Number(a), b as number | string));
       } catch (e) {
         return problem(reply, 400, 'Invalid simulation', (e as Error).message);
+      }
+      if (results.includes('rejected')) {
+        reply.header('Retry-After', '1');
+        return problem(reply, 503, 'Event bus at capacity');
       }
       return reply.code(202).send({ action, args, results });
     },
@@ -348,6 +400,18 @@ export async function buildApp(config: ServerConfig): Promise<App> {
     },
   };
 }
+
+/** How many leading args of each simulate action are player ids. */
+const SIMULATE_PLAYER_ARGS: Record<SimulateAction, 1 | 2> = {
+  playerLeveledUp: 1,
+  itemAcquired: 1,
+  challengeCompleted: 1,
+  playerAttacked: 2,
+  playerDefeated: 2,
+  friendRequestSent: 2,
+  friendRequestAccepted: 2,
+  playerFollowed: 2,
+};
 
 function simulate(core: Core, action: SimulateAction, a: number, b: number | string): string {
   const n = (v: number | string) => {

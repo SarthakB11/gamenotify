@@ -1,4 +1,7 @@
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app.ts';
+import { loadConfig } from '../src/config.ts';
 import { api, login, startApp } from './support.ts';
 
 let stop: (() => Promise<void>) | undefined;
@@ -50,7 +53,12 @@ describe('auth & health', () => {
   });
 
   it('dev endpoints are disabled in production', async () => {
-    const { base } = await setup({ NODE_ENV: 'production', INTERNAL_API_KEY: 'k', LOG_LEVEL: 'silent' });
+    const { base } = await setup({
+      NODE_ENV: 'production',
+      AUTH_SECRET: 'prod-test-secret-value',
+      INTERNAL_API_KEY: 'prod-test-internal-key',
+      LOG_LEVEL: 'silent',
+    });
     expect((await api(base)('/v1/dev/login', { method: 'POST', json: { playerId: 1 } })).status).toBe(404);
   });
 });
@@ -250,5 +258,96 @@ describe('graceful shutdown', () => {
     expect(r.status).toBe(503);
     expect(r.headers.get('retry-after')).toBe('1');
     expect(app.core.inboxService.page(1 as never, null, 10).entries).toHaveLength(0);
+  });
+});
+
+describe('operational hardening', () => {
+  const key = { 'x-internal-key': 'dev-internal-key' };
+
+  it('compares the internal key exactly: wrong, wrong-length, empty and missing keys are refused', async () => {
+    const { base } = await setup();
+    const call = (headers: Record<string, string>) => api(base)('/v1/admin/dlq', { headers });
+    expect((await call({})).status).toBe(401);
+    expect((await call({ 'x-internal-key': '' })).status).toBe(401);
+    expect((await call({ 'x-internal-key': 'dev-internal-kez' })).status).toBe(401);
+    expect((await call({ 'x-internal-key': 'dev-internal-key-and-more' })).status).toBe(401);
+    expect((await call({ 'x-internal-key': 'x' })).status).toBe(401);
+    expect((await call(key)).status).toBe(200);
+  });
+
+  it('rejects events for players that are not in the directory (422) before publishing', async () => {
+    const { base, app } = await setup();
+    const before = app.core.bus.depth;
+    const call = (json: unknown) => api(base)('/v1/events', { method: 'POST', headers: key, json });
+    const r = await call({ kind: 'game.player_leveled_up', playerId: 9_007_199_254_740_991, newLevel: 2 });
+    expect(r.status).toBe(422);
+    expect(r.headers.get('content-type')).toContain('application/problem+json');
+    // Known actor, unknown target.
+    expect((await call({ kind: 'social.friend_request_sent', senderId: 1, recipientId: 424_242 })).status).toBe(422);
+    expect((await call({ kind: 'game.pvp_attacked', attackerId: 555_555, victimId: 1 })).status).toBe(422);
+    expect(app.core.bus.depth).toBe(before);
+    await app.core.settle();
+    expect(app.core.inbox.lastSeq(424_242 as never)).toBe(0);
+    expect((await call({ kind: 'social.friend_request_sent', senderId: 3, recipientId: 1 })).status).toBe(202);
+  });
+
+  it('dev simulate rejects unknown players with 422', async () => {
+    const { base } = await setup();
+    const call = api(base, await login(base, 1));
+    const r = await call('/v1/dev/simulate', { method: 'POST', json: { action: 'playerFollowed', args: [2, 999_999] } });
+    expect(r.status).toBe(422);
+    expect(
+      (await call('/v1/dev/simulate', { method: 'POST', json: { action: 'playerLeveledUp', args: [999_999, 3] } })).status,
+    ).toBe(422);
+  });
+
+  it('dev simulate returns 503 + Retry-After when the bus rejects the event', async () => {
+    const { base, app } = await setup({ BUS_CAPACITY: '2' });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    app.core.bus.subscribeAll(() => gate);
+    const call = api(base, await login(base, 1));
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const r = await call('/v1/dev/simulate', { method: 'POST', json: { action: 'playerLeveledUp', args: [1, 2] } });
+      statuses.push(r.status);
+      if (r.status === 503) expect(r.headers.get('retry-after')).toBe('1');
+    }
+    expect(statuses[0]).toBe(202);
+    expect(statuses).toContain(503);
+    release();
+  });
+});
+
+describe('request logging', () => {
+  it('never writes session tokens from the query string to the logs', async () => {
+    const lines: string[] = [];
+    const logStream = {
+      write: (l: string) => {
+        lines.push(l);
+      },
+    };
+    const app = await buildApp(loadConfig({ NODE_ENV: 'test', AUTH_SECRET: 'test-secret', LOG_LEVEL: 'info' }), { logStream });
+    await app.server.listen({ host: '127.0.0.1', port: 0 });
+    const base = `http://127.0.0.1:${(app.server.server.address() as AddressInfo).port}`;
+    try {
+      const token = await login(base, 1);
+      const ac = new AbortController();
+      const ok = await fetch(`${base}/v1/stream?token=${token}&lastEventId=x`, { signal: ac.signal });
+      expect(ok.status).toBe(200);
+      ac.abort();
+      // A bad token takes the error path (request completed with 401).
+      const bad = await fetch(`${base}/v1/stream?token=bad.secret-token-value`);
+      expect(bad.status).toBe(401);
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      await app.close();
+    }
+    const all = lines.join('');
+    expect(all).toContain('/v1/stream');
+    expect(all).not.toContain('secret-token-value');
+    expect(all).not.toMatch(/token=(?!\[redacted\])/);
+    expect(all).toContain('token=[redacted]');
+    expect(all).toContain('lastEventId=x');
   });
 });
