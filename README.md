@@ -206,7 +206,7 @@ test/golden/       expected demo output (acceptance test)
 | `GET` | `/v1/players` | Seeded players for the demo's picker. No auth |
 | `GET` | `/v1/me` | Bearer or cookie. Current player, display name and unread count |
 | `POST` | `/v1/dev/logout` | Clears the session cookie. 204 |
-| `GET` | `/v1/admin/dlq` | `x-internal-key`. The 100 most recent dead-lettered entries |
+| `GET` | `/v1/admin/dlq` | `x-internal-key`. The most recent dead-lettered entries, newest first (`?limit=` 1 to 1000, default 100) |
 | `GET` | `/healthz` · `/readyz` | Liveness, and readiness (503 while draining). No auth |
 | `GET` | `/metrics` | Prometheus text. No auth: intended for an internal scrape, so do not expose it publicly |
 

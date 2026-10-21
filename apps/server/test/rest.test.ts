@@ -213,6 +213,26 @@ describe('POST /v1/events (ingestion for real producers)', () => {
   });
 });
 
+describe('GET /v1/admin/dlq limit', () => {
+  const key = { 'x-internal-key': 'dev-internal-key' };
+
+  it('honours the limit parameter (newest first), defaults to 100 and validates the bound', async () => {
+    const { base, app } = await setup();
+    app.core.gameEngine.playerLeveledUp(1, 2);
+    await app.core.settle();
+    const entry = app.core.inboxService.page(1 as never, null, 1).entries[0]!;
+    for (let i = 1; i <= 120; i++) app.core.dlq.put({ entry, channel: 'in-app', attempts: i, at: i, error: 'boom' });
+    const get = (q: string) => api(base)(`/v1/admin/dlq${q}`, { headers: key });
+    expect((await get('')).body).toHaveLength(100);
+    const three = await get('?limit=3');
+    expect(three.body.map((d: { attempts: number }) => d.attempts)).toEqual([120, 119, 118]);
+    expect((await get('?limit=1000')).body).toHaveLength(120);
+    expect((await get('?limit=0')).status).toBe(400);
+    expect((await get('?limit=1001')).status).toBe(400);
+    expect((await get('?limit=abc')).status).toBe(400);
+  });
+});
+
 describe('POST /v1/dev/simulate', () => {
   it('drives the brief API and validates arguments', async () => {
     const { base } = await setup();

@@ -22,6 +22,7 @@ import { StreamTicketStore } from './auth/stream-tickets.ts';
 import type { ServerConfig } from './config.ts';
 import { problem } from './http/problem.ts';
 import {
+  dlqQuery,
   idParams,
   loginBody,
   pageQuery,
@@ -409,8 +410,10 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     },
   );
 
-  server.get<{ Querystring: { limit?: number } }>('/v1/admin/dlq', { preHandler: requireInternalKey }, async () =>
-    core.dlq.list(100).map((d) => ({ ...d, entry: toInboxEntryDto(d.entry) })),
+  server.get<{ Querystring: { limit: number } }>(
+    '/v1/admin/dlq',
+    { schema: { querystring: dlqQuery }, preHandler: requireInternalKey },
+    async (req) => core.dlq.list(req.query.limit).map((d) => ({ ...d, entry: toInboxEntryDto(d.entry) })),
   );
 
   // ── Static web client (single origin → no CORS, cookies just work) ─────────

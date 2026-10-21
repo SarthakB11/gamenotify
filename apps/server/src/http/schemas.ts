@@ -20,6 +20,12 @@ export const pageQuery = {
   },
 } as const;
 
+export const dlqQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } },
+} as const;
+
 export const idParams = {
   type: 'object',
   required: ['id'],
