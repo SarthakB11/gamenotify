@@ -2,6 +2,8 @@
 
 The workflow is **spec-driven**: requirements → questions → research → HLD → LLD → tests → code → measurement. AI did most of the typing. Every step had a **human decision point** and a **machine-checkable gate**.
 
+**Note on git history.** The repository history was created by importing the finished archive in logical commits, so commit timestamps do not show the build order. The order is recorded in the session notes in [prompts.md](./prompts.md).
+
 ```mermaid
 flowchart LR
   A[Project brief PDF] --> B[Requirements extraction<br/>FR/NFR tables]
@@ -56,6 +58,10 @@ The AI proposed options and defaults. These choices were the developer's, taken 
 - **Budgets:** set the rule that test assertions and performance budgets are never loosened to make CI pass; the AI must ask first (session 2 prompt).
 
 **On "don't build beyond what is asked".** The brief says not to build beyond what is asked, but also welcomes additional features after the core is complete. The reasoning was that the core had to be finished and verified first, so the extras were built only after it was green.
+
+### Where the developer overrode the AI
+
+(to be filled from the session transcripts)
 
 ## 3. Research (before design, not after)
 

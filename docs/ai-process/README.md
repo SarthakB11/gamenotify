@@ -4,7 +4,7 @@ This folder records how AI was used to go from a project brief to a working, ver
 
 | File | What it contains |
 |---|---|
-| [process.md](./process.md) | The workflow, step by step: requirements → clarification → research → design → test-first build → verification, with the corrections AI output needed |
+| [process.md](./process.md) | The workflow, step by step: requirements → clarification → research → design → core-first build with tests written alongside → verification, with the corrections AI output needed |
 | [prompts.md](./prompts.md) | The actual prompts used (verbatim where unedited, otherwise marked as condensed) and reusable prompt patterns |
 | [research.md](./research.md) | What was researched, what was learned, and how it changed the design (with sources) |
 

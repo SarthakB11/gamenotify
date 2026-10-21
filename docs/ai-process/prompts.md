@@ -52,6 +52,7 @@ The AI asked round 2 (rarity, PvP, muted behaviour, grouping), then built, verif
 | **Hostile review** | "Review this as a staff engineer looking for unbounded memory, event-loop stalls and flaky tests." | Finds design bugs before they are coded |
 | **Measure, then optimise** | "Profile first; optimise only the top frames; re-measure." | Avoids speculative optimisation and produced a 6× win |
 | **Orchestrator + workers** | "Review with parallel read-only agents; implement each fix with a worker that must show a failing test first." | Independent perspectives catch more; the orchestrator keeps judgement and reviews every diff |
+| **Review loop** | Cold independent review → ranked fixes → parallel workers, each starting with a failing test → orchestrator reviews every diff → re-review | Sessions 4 and 5 (§8, §9) are this loop run twice; the second cold review checked the first round's fixes and found new defects |
 
 ## 6. Session 2: Claude Code (repository push)
 
@@ -138,6 +139,8 @@ Prompt, verbatim:
 
 ## 8. Session 4: Claude Code (independent review and hardening)
 
+Sessions 4 and 5 are one **review loop**: cold review, ranked fixes, parallel workers writing a failing test first, orchestrator reviewing each diff, then a fresh re-review.
+
 Prompt, lightly edited (file name shortened):
 
 > Rank our project based on the brief. You can use subagents. Implementations and fixes should be through Sonnet subagents. Take advice whenever stuck.
@@ -165,7 +168,7 @@ The follow-up referred to the ranked fix list below.
 - **Group digests skipped the preference check.** Disabling a category during the 10 s window still pushed the digest live. Fix: preferences are re-evaluated when the digest is emitted (disabled: not created, muted: SILENT).
 - **Shutdown race.** An event POSTed after the core had drained got 202 and was dropped. Fix: ingest returns 503 with Retry-After once shutdown starts.
 - **Docs overstated the scale path.** HLD §12 called Postgres/Redis "an adapter swap", but the storage ports and the dispatcher are synchronous and the grouping, rate-limit and sequence state lives in process memory. HLD §12 and §16 and LLD §7 now match the code.
-- **The AI-process record gained a "Decisions the developer made" section.** The demo video was re-recorded (2 min 12 s; live latencies 20 ms and 14 ms).
+- **Record and demo.** The AI-process record gained a "Decisions the developer made" section and the demo video was re-recorded (2 min 12 s).
 
 **Verification:**
 
@@ -183,9 +186,10 @@ Prompts, verbatim:
 
 **Workflow:**
 
-- A fresh cold reviewer graded the public repo with no access to earlier findings.
-- A second agent cloned it and ran it end to end (Node 20 fail-fast, Node 24 verify, bench, SSE load and Docker), and checked every earlier fix with file:line evidence.
-- Fixes were then split across two Sonnet workers in separate git worktrees (server; core and web) running in parallel, cherry-picked onto main and verified, followed by this docs pass.
+Same loop as session 4:
+
+- A fresh cold reviewer graded the public repo with no access to earlier findings. A second agent cloned it, ran it end to end (Node 20 fail-fast, Node 24 verify, bench, SSE load, Docker) and checked every earlier fix with file:line evidence.
+- Two Sonnet workers (server; core and web) fixed the findings in parallel git worktrees, cherry-picked onto main and verified.
 
 **What was found and fixed:**
 
@@ -198,7 +202,6 @@ Prompts, verbatim:
 - **Unbounded inbox logs.** Ingestion accepted any player id. Unknown players now get 422.
 - **Inbox memory.** Rings grow on demand instead of preallocating 200 slots.
 - **Banned constructor parameter property** in the web client removed.
-- **Docs.** Test counts and CI claims were synced with the code.
 
 **Verification:**
 
