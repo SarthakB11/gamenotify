@@ -51,6 +51,7 @@ The AI asked round 2 (rarity, PvP, muted behaviour, grouping), then built, verif
 | **Gate-driven loop** | "Done means `pnpm verify` is green." | The AI self-corrects against objective checks |
 | **Hostile review** | "Review this as a staff engineer looking for unbounded memory, event-loop stalls and flaky tests." | Finds design bugs before they are coded |
 | **Measure, then optimise** | "Profile first; optimise only the top frames; re-measure." | Avoids speculative optimisation and produced a 6× win |
+| **Orchestrator + workers** | "Review with parallel read-only agents; implement each fix with a worker that must show a failing test first." | Independent perspectives catch more; the orchestrator keeps judgement and reviews every diff |
 
 ## 6. Session 2: Claude Code (repository push)
 
@@ -134,3 +135,40 @@ Prompt, verbatim:
   - The README shows an animated WebP (1152 px, 12 fps, 19.3 MB, a keyframe every second) that links to the 1080p H.264 MP4 (21.5 MB, 2 min 12 s).
   - Animated GIF was rejected because it came out at 45–90 MB.
   - A first WebP encode was rejected because its frame-diff artifacts built up into visible blocks.
+
+## 8. Session 4: Claude Code (independent review and hardening)
+
+Prompt, lightly edited (file name shortened):
+
+> Rank our project based on the brief. You can use subagents. Implementations and fixes should be through Sonnet subagents. Take advice whenever stuck.
+
+Follow-up prompt, condensed:
+
+> Do these in order.
+
+The follow-up referred to the ranked fix list below.
+
+**Workflow (orchestrator and workers):**
+
+- An Opus orchestrator read the brief and fanned out three read-only reviewers in parallel:
+  1. A clean-clone run check, acting as a reviewer who follows the README literally, on Node 20 and on Node 24.
+  2. A requirement-by-requirement traceability check against the code, not the docs.
+  3. A staff-engineer review of architecture, tests, docs and this AI-process record.
+- It merged the three reports into a scorecard and a ranked fix list. Scores: requirements fit 9/10, code quality 8.5, testing 8.5, architecture and extensibility 7, documentation 6.5, AI-process record 6, scope discipline 4.
+- Every fix was implemented by a Sonnet worker with a regression test that failed before the fix and passed after. The orchestrator reviewed each diff. Independent workers ran in parallel in a separate git worktree when they touched disjoint files.
+- The gate did not change: `pnpm verify` green, `pnpm bench` budgets met, assertions and budgets never loosened.
+
+**What was found and fixed:**
+
+- **Wrong Node version failed late and confusingly.** On Node 20, `pnpm install` only warned, then `pnpm build` and `pnpm test` crashed with a rolldown "Cannot find native binding" error. Fix: `.npmrc` sets `engine-strict=true`, so install now fails with "Expected version: >=24 / Got: v20.18.1", and the README points to `docker compose up --build`.
+- **Rate limiting ran before grouping, so held burst events spent tokens.** 25 new followers within 10 s used all 20 SOCIAL tokens and the next friend request was stored SILENT. Fix: the stage order is now idempotency, preferences, grouping, rate limit. Only the leading-edge notification and the digest spend tokens.
+- **Group digests skipped the preference check.** Disabling a category during the 10 s window still pushed the digest live. Fix: preferences are re-evaluated when the digest is emitted (disabled: not created, muted: SILENT).
+- **Shutdown race.** An event POSTed after the core had drained got 202 and was dropped. Fix: ingest returns 503 with Retry-After once shutdown starts.
+- **Docs overstated the scale path.** HLD §12 called Postgres/Redis "an adapter swap", but the storage ports and the dispatcher are synchronous and the grouping, rate-limit and sequence state lives in process memory. HLD §12 and §16 and LLD §7 now match the code.
+- **The AI-process record gained a "Decisions the developer made" section.** The demo video was re-recorded (2 min 12 s; live latencies 20 ms and 14 ms).
+
+**Verification:**
+
+- `pnpm verify` green: 138 tests in 17 files, 8 architecture tests and the golden demo check.
+- `pnpm bench`: "performance budgets met" (216k events/s through the bus, worst p99 17.2 µs, level-up 4.34 µs, suppressed 0.95 µs).
+- `docker compose build` OK.

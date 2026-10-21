@@ -17,3 +17,4 @@ This folder records how AI was used to go from a project brief to a working, ver
   - The implementation and tests
   - Profiling, Docker and browser verification
 - **Claude Code** (claude.ai/code) did the final repository push and polish.
+- **Claude Code** also ran an independent review and hardening session (session 4): an Opus orchestrator with parallel read-only reviewers, and Sonnet workers that fixed each finding behind a regression test.
