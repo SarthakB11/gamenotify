@@ -906,8 +906,8 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 
 | Part | Detail |
 |---|---|
-| `useNotificationStream()` | Wraps `EventSource('/v1/stream', { withCredentials: true })`. Handles `hello`, `notification` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). Exposes status `connecting / live / reconnecting` |
-| Toasts | Only for `silent: false`. Auto-dismiss after 5 s. `aria-live="polite"` |
+| `useNotificationStream()` | Wraps `EventSource('/v1/stream', { withCredentials: true })`. Handles `hello`, `notification` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` |
+| Toasts | Only for `silent: false`, and only for live frames: frames replayed after a reconnect (a burst right after `open`) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
 | Inbox panel | Initial `GET /v1/notifications`. Infinite scroll by `before`. Mark read on click |
 | Preferences panel | Category switches, a per-type override tri-state (inherit / on / off), mute 1 h, quiet hours. Uses `PATCH` with `If-Match` |
 | Simulator panel | Buttons that mirror the brief (`Level Up 1→15`, `Item 2 SwordOfAzeroth`, `Friend 3→1`, `Accept 1←3`), plus *Follower burst ×5*, *PvP*, *Duplicate event* |

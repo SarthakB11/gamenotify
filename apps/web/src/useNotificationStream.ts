@@ -5,6 +5,8 @@ export type StreamStatus = 'connecting' | 'live' | 'reconnecting';
 
 const BACKOFF_MIN_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
+/** Replayed frames follow `open` back to back; a quiet gap this long means replay is over and frames are live. */
+const REPLAY_QUIET_MS = 250;
 
 /**
  * Wraps EventSource. The URL carries only a short-lived single-use ticket (EventSource cannot set headers),
@@ -30,10 +32,40 @@ export function useNotificationStream(api: Api, onLive: (e: Entry) => void) {
         for (const e of list) next.set(e.seq, e);
         return next;
       });
-    const refetch = () =>
-      api.inbox().then((page) => {
-        if (!cancelled) setEntries(new Map(page.entries.map((e) => [e.seq, e])));
-      });
+    // Live frames that arrive while a fetch is in flight, so applying the page cannot drop them.
+    let arrivedDuringFetch: Entry[] = [];
+    let fetching = 0;
+    /**
+     * `hello` (first connect) merges the page into what the stream already delivered. `resync` means the
+     * server lost the cursor (restart or eviction), so the old map may hold stale seqs and is replaced,
+     * but frames received on this connection while fetching are kept.
+     */
+    const refetch = (replace: boolean) => {
+      fetching++;
+      return api
+        .inbox()
+        .then((page) => {
+          if (cancelled) return;
+          setEntries((prev) => {
+            const next = replace ? new Map<number, Entry>() : new Map(prev);
+            for (const e of page.entries) next.set(e.seq, e);
+            for (const e of arrivedDuringFetch) next.set(e.seq, e);
+            return next;
+          });
+        })
+        .finally(() => {
+          if (--fetching === 0) arrivedDuringFetch = [];
+        });
+    };
+    // Toasts are for live frames only: after a reconnect the server first replays what was missed.
+    let replaying = false;
+    let replayTimer: ReturnType<typeof setTimeout> | undefined;
+    const extendReplay = () => {
+      clearTimeout(replayTimer);
+      replayTimer = setTimeout(() => {
+        replaying = false;
+      }, REPLAY_QUIET_MS);
+    };
     const retry = () => {
       if (cancelled) return;
       setStatus('reconnecting');
@@ -55,8 +87,10 @@ export function useNotificationStream(api: Api, onLive: (e: Entry) => void) {
       const query = `ticket=${encodeURIComponent(ticket)}${lastEventId ? `&lastEventId=${encodeURIComponent(lastEventId)}` : ''}`;
       const source = new EventSource(`/v1/stream?${query}`);
       es = source;
+      replaying = lastEventId !== '';
       source.addEventListener('open', () => {
         failures = 0;
+        if (replaying) extendReplay();
         setStatus('live');
       });
       source.addEventListener('error', () => {
@@ -65,23 +99,26 @@ export function useNotificationStream(api: Api, onLive: (e: Entry) => void) {
       });
       source.addEventListener('hello', (ev) => {
         track(ev);
-        void refetch();
+        void refetch(false);
       });
       source.addEventListener('resync', (ev) => {
         track(ev);
-        void refetch();
+        void refetch(true);
       });
       source.addEventListener('notification', (ev) => {
         track(ev);
         const entry = JSON.parse((ev as MessageEvent<string>).data) as Entry;
         merge([entry]);
-        if (!entry.silent) onLiveRef.current(entry);
+        if (fetching > 0) arrivedDuringFetch.push(entry);
+        if (replaying) extendReplay();
+        else if (!entry.silent) onLiveRef.current(entry);
       });
     };
     void connect();
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      clearTimeout(replayTimer);
       es?.close();
     };
   }, [api]);
