@@ -294,3 +294,22 @@ Prompts, verbatim:
 **Verification:**
 
 - `pnpm bench`: budgets met (~194k events/s, worst p99 22 µs).
+
+## 13. Session 9: Claude Code (final fixes)
+
+Prompts, verbatim:
+
+> yes fix them all and push
+
+**Workflow and findings:**
+
+- The sixth cold review scored 8.4/10 and said to ship as is. An 8-run cold verify (3 of them under heavy load) found no flakiness. The remaining findings were fixed anyway.
+- The web UI looped on "Reconnecting…" after a server restart: the per-process `AUTH_SECRET` invalidated the session stored in `sessionStorage`, and the ticket call retried forever. A 401 now surfaces as a distinct `UnauthorizedError`, retrying stops, the stored session is cleared and the player picker returns with "Session expired — pick a player again". Verified in a real browser (Playwright): without a fixed secret the picker came back 0.8 s after the restart, picking a player again reached "Live", and a Kael → Aria friend request showed a toast; with a fixed `AUTH_SECRET` a restart reconnected to "Live" without logging out.
+- A digest stayed SILENT if a mute ended inside the grouping window, because the first silent held event latched the mode. The digest mode is now decided at emission from the preferences in force (disabled: not created, muted or quiet: SILENT, otherwise LIVE). New tests cover a mute that ends inside the window (LIVE) and one still active at emission (SILENT).
+- `GET /v1/admin/dlq` honours `limit` (1 to 1000, default 100, validated), with a test, and the README and LLD API tables say so.
+- Coverage figures were re-measured (core 99.6%, server 97.2%, combined 98.8%), the README dispatcher row now names `#store`, `#announce` and `#emitDigest`, and the line counts and test count (180) were refreshed.
+
+**Verification:**
+
+- `pnpm verify`: 3 of 3 cold runs green (`git clean -fdxq -e node_modules` before each), 180 tests, 15 to 16 s each.
+- `pnpm bench`: budgets met (~155k events/s, worst p99 17 µs).
