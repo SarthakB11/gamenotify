@@ -78,10 +78,17 @@ Open **http://localhost:3000** and pick a player (e.g. Aria). Open a **second ta
 
 **Docker:**
 
-The Dockerfile uses `RUN --mount=type=cache`, so a plain `docker build` needs BuildKit. Use `docker compose` or `docker buildx build`.
+The Dockerfile uses `RUN --mount=type=cache`, so a plain `docker build` needs BuildKit. Compose is the zero-config demo path. If `buildx` is missing, `docker compose up --build` still works.
 
 ```bash
 docker compose up --build      # http://localhost:3000 (demo mode: NODE_ENV=development)
+
+# production image
+docker buildx build -t gamenotify .
+docker run --rm -p 3000:3000 \
+  -e AUTH_SECRET='<16+ random chars>' \
+  -e INTERNAL_API_KEY='<16+ random chars, not dev-internal-key>' \
+  gamenotify
 ```
 
 The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and refuses to start unless `AUTH_SECRET` and `INTERNAL_API_KEY` are set to private values of 16+ characters (the public `dev-internal-key` is rejected).
@@ -113,7 +120,7 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 **Extras, built after the core passed its tests:**
 
 - **Per-event-type overrides**, plus mute-for-N-minutes and quiet hours in the player's IANA time zone. HIGH-priority PvP attacks bypass quiet hours.
-- **Offline inbox + replay.** Every notification is stored with a per-player `seq`. On reconnect the browser sends `Last-Event-ID` and the server replays exactly what was missed. After a restart or eviction the server sends an explicit `resync`.
+- **Offline inbox + replay.** Every notification is stored with a per-player `seq`. On reconnect the client sends its last seen id (`Last-Event-ID` header, or `?lastEventId=` from the browser) and the server replays exactly what was missed. After a restart or eviction the server sends an explicit `resync`.
 - **Idempotency.** An event redelivered by an at-least-once producer notifies at most once.
 - **Rate limiting.** A token bucket per player and category. Notifications over the limit are **stored silently, never dropped**. The limiter runs after grouping, so followers held back for a digest do not use up the budget.
 - **Burst grouping.** The first follower or attack is delivered instantly. The rest of the burst collapses into *"Player 'Kael' and 3 others started following you."*
@@ -162,7 +169,7 @@ flowchart LR
 
 - **Hexagonal core.** `packages/core` has **zero npm dependencies** and no HTTP or file I/O. Everything external (sender, clock, IDs, storage, logger, metrics) is a port. An architecture test fails the build if a layer boundary is crossed.
 - **Reject early, render late.** Filters run on a cheap *intent*. Only surviving intents are rendered into a `Notification`. A suppressed event costs about **1.2 µs**, against **4.9 µs** for one that is fully rendered, stored and sent (`pnpm bench`, 2026-10-21, Linux x64 (WSL2), i7-12650H, Node 24.22.1).
-- **Why SSE rather than WebSockets:** notifications only flow server → client. SSE gives automatic reconnect plus `Last-Event-ID` replay for free over plain HTTP (proxy- and HTTP/2-friendly). Client → server actions use REST. A WebSocket adapter would slot in behind the same `NotificationSender` port.
+- **Why SSE rather than WebSockets:** notifications only flow server → client. SSE is one-way, plain HTTP (proxy- and HTTP/2-friendly) and has simple framing, and its `Last-Event-ID` replay semantics are reused through the `?lastEventId=` query parameter. Because the stream URL carries a single-use ticket, the browser's own reconnect cannot reuse it: the web client closes the stream, fetches a new ticket and reopens with `?lastEventId=`. Client → server actions use REST. A WebSocket adapter would slot in behind the same `NotificationSender` port.
 
 Full design: **[docs/HLD.md](docs/HLD.md)** (high level) · **[docs/LLD.md](docs/LLD.md)** (classes, algorithms, APIs, tests) · **[docs/adr/](docs/adr)** (decision records).
 
@@ -194,7 +201,14 @@ test/golden/       expected demo output (acceptance test)
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |
 | `POST` | `/v1/events` | Ingestion for real producers (`x-internal-key`). Returns 202, 422 for player ids not in the directory, or 503 + `Retry-After` under back-pressure |
 | `POST` | `/v1/dev/simulate` | `{ "action": "playerLeveledUp", "args": [1, 15] }`, mirroring the brief |
-| `GET` | `/healthz` · `/readyz` · `/metrics` | Ops |
+| `GET` | `/v1/players` | Seeded players for the demo's picker. No auth |
+| `GET` | `/v1/me` | Bearer or cookie. Current player, display name and unread count |
+| `POST` | `/v1/dev/logout` | Clears the session cookie. 204 |
+| `GET` | `/v1/admin/dlq` | `x-internal-key`. The 100 most recent dead-lettered entries |
+| `GET` | `/healthz` · `/readyz` | Liveness, and readiness (503 while draining). No auth |
+| `GET` | `/metrics` | Prometheus text. No auth: intended for an internal scrape, so do not expose it publicly |
+
+Routes without a stated key take a session: `Authorization: Bearer <token>` (or the session cookie) from `/v1/dev/login`. `/v1/dev/*` (login, logout, simulate) is the demo path and is disabled (404) when `NODE_ENV=production`; simulate needs a Bearer session token.
 
 Example producer request (`eventId` is optional and doubles as the idempotency key; `occurredAt` is optional epoch milliseconds):
 
@@ -226,7 +240,7 @@ Errors use RFC 9457 Problem Details. Configuration is done with env vars (see `.
 
 ## Measured
 
-Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on Linux x64 (WSL2), i7-12650H, Node 24.22.1. The two SSE rows come from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
+Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on a quiet machine: Linux x64 (WSL2), i7-12650H, Node 24.22.1. On a loaded machine the same run measured roughly 8 µs/event and ~81k events/s, still within the budgets (p99 < 1 ms per event, ≥ 50k events/s). The two SSE rows come from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
 
 | What | Result |
 |---|---|
