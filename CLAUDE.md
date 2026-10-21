@@ -17,7 +17,7 @@ The design lives in `docs/HLD.md` and `docs/LLD.md`, and decisions in `docs/adr/
 - `packages/core` is hexagonal: `domain` ← `ports` ← `application` ← `infrastructure` / `simulation` ← `composition.ts`.
 - The core has **zero npm dependencies** and no Node I/O modules. Time, IDs, timers, logging and metrics come in through ports (`Clock`, `IdGenerator`, `Scheduler`, `Logger`, `Metrics`).
 - Apps import `@gamenotify/core` (or `@gamenotify/core/testing` in tests), never core internals by relative path.
-- To add an event type: add the event to `domain/events.ts`, a row to `TYPE_META`, a template to `EN_CATALOG`, and a resolver registered in `composition.ts`, plus tests. The compiler flags every place you missed (`satisfies Record<…>`).
+- To add an event type: add the event to `domain/events.ts` and `ALL_EVENT_KINDS`, a row to `TYPE_META`, a template to `EN_CATALOG`, a resolver registered in `composition.ts`, and the matching `event(...)` entry in `apps/server/src/http/schemas.ts`, plus tests. The compiler flags the `Record`-typed tables (`TYPE_META`, `EN_CATALOG`) and `resolvers.assertComplete` fails at boot for a missing resolver, but the REST ingestion schema is not checked, so a missing entry only shows up as `POST /v1/events` rejecting the new kind.
 
 ## TypeScript conventions
 - TS 7, `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, **`erasableSyntaxOnly`**:

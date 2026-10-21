@@ -357,7 +357,7 @@ The first build ran at 76 µs per event. Profiling found V8 Map tombstones in th
 
 ## 12. Scalability and evolution path
 
-v1 is deliberately single-process, as the brief asks. Every step below is **an adapter swap, not a rewrite**.
+v1 is deliberately single-process, as the brief asks. Some of the steps below are adapter swaps. Others need real design work, listed after the diagram.
 
 ```mermaid
 flowchart LR
@@ -369,6 +369,15 @@ flowchart LR
 - **v2.** Producers publish to a durable stream. Dispatcher workers form a consumer group partitioned by `recipientId`, which keeps per-player ordering. Gateways subscribe to a per-node channel. Presence lives in Redis with TTL heartbeats.
 - **v3.** Mirrors **Riot Messaging Service**: stateless routing, edge nodes that only hold sockets, and durable sessions that cache in memory across short disconnects. Riot reports about 10M connections per edge node in testing.
 - **Bandwidth.** At scale, send deltas instead of snapshots and use stream compression. Discord cut gateway traffic by about 40% with zstd streaming plus delta updates.
+
+**What is an adapter swap, and what is not.**
+
+- *Adapter swaps (no core change):* new delivery channels (`DeliveryChannel`, `NotificationSender`: push, email, WebSocket), logging and metrics sinks, the clock, scheduler and id generator, and the player directory and content catalog (both are read-only lookups today).
+- *Needs real work:*
+  - **Storage.** `PreferenceRepository`, `InboxRepository` and `IdempotencyStore` are **synchronous** ports (`packages/core/src/ports/index.ts`), and the dispatcher is synchronous by design (LLD §5.2). A Postgres or Redis adapter needs async ports, or a write-behind/outbox pattern that keeps the in-memory hot path and persists behind it.
+  - **Sharding.** Dispatchers must be partitioned by player id so one node owns each player's state.
+  - **Process-local state.** Grouping timers, rate-limit token buckets, the idempotency cache and per-player sequence numbers live in process memory. They must be externalised or pinned to the owning shard, and sequence allocation must stay monotonic per player across restarts and failover.
+  - **Bus.** The in-process bus gives back-pressure and ordering for free. A durable stream has to preserve per-player ordering and define redelivery, which the idempotency store then absorbs.
 
 ---
 
@@ -423,14 +432,14 @@ Full ADRs live in [`docs/adr/`](./adr/).
 
 | Scenario | Change required |
 |---|---|
-| Add a new event type (e.g. *Guild Invite*) | Add an event type, an `IntentResolver`, a template, and a test. **No existing class changes.** |
+| Add a new event type (e.g. *Guild Invite*) | Add the event to `domain/events.ts` and `ALL_EVENT_KINDS`, a `TYPE_META` row, an `EN_CATALOG` template, an `IntentResolver` registered in `composition.ts`, an `event(...)` entry in `apps/server/src/http/schemas.ts`, and tests. About six small edits in existing files, no changes to the dispatcher or pipeline. The compiler and boot-time `assertComplete` catch everything except `schemas.ts`. |
 | Add push or email | Implement `DeliveryChannel`, register it in the router, and add `channels` to preferences |
 | 1M concurrent players | v2/v3 path (§12): stream bus, partitioned dispatchers, edge gateways, Redis presence |
 | Localisation | The message catalog is already keyed. Add a locale to preferences and per-locale templates (ICU MessageFormat) |
 | Priority / urgent bypass | `Priority.HIGH` skips quiet hours and the rate limit. This is one rule in the policy |
 | Digest emails | A scheduled consumer reads unread inbox entries older than N hours |
 | Exactly-once? | Not achievable end to end over networks. We use at-least-once with idempotency, and say so |
-| Replace SSE with WebSocket | Add a `ws` adapter that implements the same `Connection` interface. The core is unchanged |
+| Replace SSE with WebSocket | Add a `ws` gateway beside `SseConnection` and `ConnectionRegistry`, implementing the same `NotificationSender` port. The core is unchanged |
 | Multi-region | Region-local edges. Route by home region. The inbox is replicated asynchronously |
 
 ---

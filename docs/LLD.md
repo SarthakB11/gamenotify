@@ -909,45 +909,23 @@ The client renders text only (no `dangerouslySetInnerHTML`). The production buil
 
 ---
 
-## 7. Composition root — `apps/server/src/composition.ts`
+## 7. Composition root — `packages/core/src/composition.ts`
 
 Wiring is explicit (pure DI). The demo app uses the same function with a console sender and no HTTP.
 
 ```ts
-export function buildCore(cfg: Config, ports: { sender: NotificationSender; log: Logger; metrics: Metrics;
-                                                 clock?: Clock; scheduler?: Scheduler }) {
-  const clock = ports.clock ?? systemClock, ids = uuidV7Ids(), sched = ports.scheduler ?? nodeScheduler;
-  const directory = new InMemoryPlayerDirectory(SEED.players);
-  const catalog   = new InMemoryContentCatalog(SEED.items, SEED.challenges);
-  const prefs     = new InMemoryPreferenceRepository();
-  const inbox     = new InMemoryInbox({ capacity: cfg.inbox.capacity, ttlMs: cfg.inbox.ttlMs, clock });
-  const bus       = new InProcessEventBus({ capacity: cfg.bus.capacity, batch: cfg.bus.batch, log: ports.log, metrics: ports.metrics });
+export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {}) { … }
 
-  const resolvers = new ResolverRegistry(ports.log)
-    .register(new LevelUpResolver()).register(new ItemAcquiredResolver(catalog, cfg.minItemRarity))
-    .register(new ChallengeCompletedResolver()).register(new PvpAttackedResolver()).register(new PvpDefeatedResolver())
-    .register(new FriendRequestResolver()).register(new FriendAcceptedResolver()).register(new NewFollowerResolver());
-  resolvers.assertComplete(ALL_EVENT_KINDS);                      // fail fast at boot
-
-  const pre  = [new IdempotencyStage(new TtlLruIdempotencyStore(cfg.dedup, clock)), new PreferenceStage()] as const;
-  const post = [new RateLimitStage(new TokenBucketLimiter(cfg.rateLimit, clock))] as const;   // after grouping
-  const grouping  = new GroupingStage({ windowMs: cfg.grouping.windowMs, maxWindowMs: cfg.grouping.maxWindowMs, clock, scheduler: sched });
-  const renderer  = new NotificationRenderer(EN_CATALOG, directory, catalog, new NotificationFactory(ids, clock));
-  const delivery  = new DeliveryRouter({ channels: [new InAppChannel(ports.sender)], retry: cfg.retry,
-                                         dlq: new InMemoryDeadLetterQueue(1_000), prefs, clock, metrics: ports.metrics });
-  const dispatcher = new NotificationDispatcher({ resolvers, pre, post, digest: [preferences], grouping, renderer, inbox, delivery, prefs, clock, metrics: ports.metrics, log: ports.log });
-  const stop = dispatcher.start(bus);
-
-  return {
-    bus, prefs, inbox, directory,
-    gameEngine: new GameEngine(bus, ids, clock),
-    socialSystem: new SocialSystem(bus, ids, clock),
-    preferenceService: new PreferenceService(prefs, clock),
-    inboxService: new InboxService(inbox, clock),
-    async shutdown() { stop(); await bus.drain(); grouping.flushAll(); await dispatcher.idle(); },
-  };
+export interface CorePorts {
+  readonly sender: NotificationSender;          // required: the only mandatory port
+  readonly logger?: Logger;        readonly metrics?: Metrics;
+  readonly clock?: Clock;          readonly scheduler?: Scheduler;   readonly ids?: IdGenerator;
+  readonly directory?: PlayerDirectory;          readonly catalog?: ContentCatalog;
+  readonly inboxEpoch?: string;    readonly sleep?: (ms: number) => Promise<void>;
 }
 ```
+
+`buildCore` merges `overrides` into `DEFAULT_CORE_CONFIG`, builds the in-memory adapters, registers the eight resolvers (`resolvers.assertComplete(ALL_EVENT_KINDS)` fails fast at boot), assembles the pre-grouping stages (idempotency, preferences), the `GroupingStage`, the post-grouping rate-limit stage, the renderer and the `DeliveryRouter` (with `InAppChannel` over `ports.sender`), then starts the dispatcher on the bus. It returns `config`, `bus`, `dispatcher`, `grouping`, `inbox`, `dlq`, `directory`, `catalog`, `gameEngine`, `socialSystem`, `preferences`, `inboxService`, plus `settle()` (drain the bus and wait for deliveries) and `shutdown()` (drain, flush open groups, await deliveries).
 
 **Server `main.ts` lifecycle:**
 
