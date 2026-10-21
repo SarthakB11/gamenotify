@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Api, Entry } from './api.ts';
+import { type Api, type Entry, UnauthorizedError } from './api.ts';
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting';
 
@@ -14,11 +14,13 @@ const REPLAY_QUIET_MS = 250;
  * Bearer header and reopen with `?lastEventId=` set to the last id seen, so the server replays what was
  * missed. Entries are de-duplicated by seq and kept sorted.
  */
-export function useNotificationStream(api: Api, onLive: (e: Entry) => void) {
+export function useNotificationStream(api: Api, onLive: (e: Entry) => void, onUnauthorized: () => void) {
   const [entries, setEntries] = useState<Map<number, Entry>>(new Map());
   const [status, setStatus] = useState<StreamStatus>('connecting');
   const onLiveRef = useRef(onLive);
   onLiveRef.current = onLive;
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  onUnauthorizedRef.current = onUnauthorized;
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +82,12 @@ export function useNotificationStream(api: Api, onLive: (e: Entry) => void) {
       let ticket: string;
       try {
         ticket = (await api.streamTicket()).ticket;
-      } catch {
+      } catch (e) {
+        // A rejected session never recovers by retrying: hand control back so the UI can return to the picker.
+        if (e instanceof UnauthorizedError) {
+          if (!cancelled) onUnauthorizedRef.current();
+          return;
+        }
         return retry();
       }
       if (cancelled) return;

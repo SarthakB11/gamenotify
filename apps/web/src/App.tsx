@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Api, type Entry, type Player, type Preferences, TYPES } from './api.ts';
+import { Api, type Entry, type Player, type Preferences, TYPES, UnauthorizedError } from './api.ts';
 import { useNotificationStream } from './useNotificationStream.ts';
 
 const SESSION_KEY = 'gamenotify.session';
+const EXPIRED_NOTICE = 'Session expired — pick a player again';
 
 interface Session {
   token: string;
@@ -38,21 +39,38 @@ export function App() {
     } catch {}
     setSession(s);
   };
-  const logout = () => {
-    try {
-      sessionStorage.removeItem(SESSION_KEY);
-    } catch {}
-    setSession(null);
-  };
+  const [notice, setNotice] = useState<string | null>(null);
+  const logout = useCallback(
+    (expired = false) => {
+      try {
+        sessionStorage.removeItem(SESSION_KEY);
+      } catch {}
+      setNotice(expired ? EXPIRED_NOTICE : null);
+      setSession(null);
+      // The player list may have been fetched before a restart; refresh it for the picker.
+      anon
+        .players()
+        .then(setPlayers)
+        .catch(() => {});
+    },
+    [anon],
+  );
+  const onLogout = useCallback(() => logout(), [logout]);
+  const onExpired = useCallback(() => logout(true), [logout]);
 
-  if (!session) return <Login players={players} onPick={login} />;
-  return <Dashboard key={session.token} session={session} players={players} onLogout={logout} />;
+  if (!session) return <Login players={players} onPick={login} notice={notice} />;
+  return <Dashboard key={session.token} session={session} players={players} onLogout={onLogout} onExpired={onExpired} />;
 }
 
-function Login({ players, onPick }: { players: Player[]; onPick: (p: Player) => void }) {
+function Login({ players, onPick, notice }: { players: Player[]; onPick: (p: Player) => void; notice: string | null }) {
   return (
     <main className="login">
       <h1>GameNotify · Live Notifications</h1>
+      {notice && (
+        <p className="error" role="alert">
+          {notice}
+        </p>
+      )}
       <p className="muted">Pick a player. Open a second tab as another player to watch notifications arrive in real time.</p>
       <div className="players">
         {players.map((p) => (
@@ -74,7 +92,17 @@ interface Toast {
   entry: Entry;
 }
 
-function Dashboard({ session, players, onLogout }: { session: Session; players: Player[]; onLogout: () => void }) {
+function Dashboard({
+  session,
+  players,
+  onLogout,
+  onExpired,
+}: {
+  session: Session;
+  players: Player[];
+  onLogout: () => void;
+  onExpired: () => void;
+}) {
   const api = useMemo(() => new Api(session.token), [session.token]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const onLive = useCallback((entry: Entry) => {
@@ -82,7 +110,10 @@ function Dashboard({ session, players, onLogout }: { session: Session; players: 
     setToasts((t) => [...t.slice(-3), { key, entry }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.key !== key)), 5_000);
   }, []);
-  const { entries, status, markLocal } = useNotificationStream(api, onLive);
+  const { entries, status, markLocal } = useNotificationStream(api, onLive, onExpired);
+  const guard = (e: unknown) => {
+    if (e instanceof UnauthorizedError) onExpired();
+  };
   const unread = entries.filter((e) => !e.read).length;
 
   return (
@@ -104,14 +135,14 @@ function Dashboard({ session, players, onLogout }: { session: Session; players: 
       </header>
 
       <section className="grid">
-        <Simulator api={api} me={session.playerId} players={players} />
+        <Simulator api={api} me={session.playerId} players={players} onExpired={onExpired} />
         <Inbox
           entries={entries}
           unread={unread}
-          onRead={(e) => api.markRead(e.notification.id).then(() => markLocal([e.seq]))}
-          onReadAll={() => api.markAllRead().then(() => markLocal(entries.map((e) => e.seq)))}
+          onRead={(e) => api.markRead(e.notification.id).then(() => markLocal([e.seq]), guard)}
+          onReadAll={() => api.markAllRead().then(() => markLocal(entries.map((e) => e.seq)), guard)}
         />
-        <PreferencesPanel api={api} />
+        <PreferencesPanel api={api} onExpired={onExpired} />
       </section>
 
       <div className="toasts" aria-live="polite">
@@ -126,7 +157,7 @@ function Dashboard({ session, players, onLogout }: { session: Session; players: 
   );
 }
 
-function Simulator({ api, me, players }: { api: Api; me: number; players: Player[] }) {
+function Simulator({ api, me, players, onExpired }: { api: Api; me: number; players: Player[]; onExpired: () => void }) {
   const others = players.filter((p) => p.id !== me);
   const [target, setTarget] = useState<number>(others[0]?.id ?? 2);
   const [busy, setBusy] = useState(false);
@@ -138,6 +169,7 @@ function Simulator({ api, me, players }: { api: Api; me: number; players: Player
     try {
       await fn();
     } catch (e) {
+      if (e instanceof UnauthorizedError) return onExpired();
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -249,15 +281,15 @@ function Inbox({
   );
 }
 
-function PreferencesPanel({ api }: { api: Api }) {
+function PreferencesPanel({ api, onExpired }: { api: Api; onExpired: () => void }) {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api
       .preferences()
       .then(setPrefs)
-      .catch((e: Error) => setError(e.message));
-  }, [api]);
+      .catch((e: Error) => (e instanceof UnauthorizedError ? onExpired() : setError(e.message)));
+  }, [api, onExpired]);
   const patch = (p: Record<string, unknown>) =>
     api
       .patchPreferences(p)
@@ -265,7 +297,7 @@ function PreferencesPanel({ api }: { api: Api }) {
         setPrefs(next);
         setError(null);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => (e instanceof UnauthorizedError ? onExpired() : setError(e.message)));
   if (!prefs) return <article className="card">Loading preferences…</article>;
   const muted = prefs.mutedUntil !== null && prefs.mutedUntil > Date.now();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;

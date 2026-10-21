@@ -55,6 +55,14 @@ export interface Player {
   displayName: string;
 }
 
+/** Thrown for HTTP 401: the stored session is no longer valid (e.g. the server restarted with a new secret). */
+export class UnauthorizedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnauthorizedError';
+  }
+}
+
 export class Api {
   readonly #token: string | null;
 
@@ -69,7 +77,8 @@ export class Api {
     const res = await fetch(path, { ...init, headers, ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}) });
     if (!res.ok) {
       const p = (await res.json().catch(() => ({}))) as { title?: string; detail?: string };
-      throw new Error(p.detail ?? p.title ?? `HTTP ${res.status}`);
+      const message = p.detail ?? p.title ?? `HTTP ${res.status}`;
+      throw res.status === 401 ? new UnauthorizedError(message) : new Error(message);
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
