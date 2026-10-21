@@ -116,7 +116,11 @@ export class GroupingStage {
     const out: NotificationIntent =
       g.held === 1
         ? g.last
-        : { ...g.last, groupCount: g.held, actorIds: [...g.actors], distinctActors: Math.max(1, g.distinct.size),
+        : {
+            ...g.last,
+            groupCount: g.held,
+            actorIds: [...g.actors],
+            distinctActors: Math.max(1, g.distinct.size),
             ...(g.leadingActorId !== undefined ? { leadingActorId: g.leadingActorId } : {}),
           };
     this.#onFlush(out, g.silent ? DeliveryMode.SILENT : DeliveryMode.LIVE);
