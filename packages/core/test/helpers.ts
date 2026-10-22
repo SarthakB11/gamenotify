@@ -8,10 +8,7 @@ export const makeCore = (overrides: CoreConfigOverrides = {}) => {
   const sender = new RecordingSender();
   const metrics = new MemoryMetrics();
   const logger = new MemoryLogger();
-  const core = buildCore(
-    { sender, clock, scheduler, ids: seqIds(), metrics, logger, inboxEpoch: 'test', sleep: async () => {} },
-    overrides,
-  );
+  const core = buildCore({ sender, clock, scheduler, ids: seqIds(), metrics, logger, inboxEpoch: 'test' }, overrides);
   const suppressed: { recipientId: number; type: string; reason: string }[] = [];
   core.dispatcher.observe({
     onSuppressed: (i) => suppressed.push({ recipientId: i.recipientId, type: i.type, reason: i.reason }),

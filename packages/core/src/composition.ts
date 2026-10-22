@@ -1,7 +1,6 @@
 import { InProcessEventBus } from './application/bus/in-process-event-bus.ts';
 import { DeliveryRouter } from './application/delivery/delivery-router.ts';
 import { InAppChannel } from './application/delivery/in-app-channel.ts';
-import { exponentialBackoff } from './application/delivery/retry-policy.ts';
 import { NotificationDispatcher } from './application/dispatcher.ts';
 import { NotificationFactory } from './application/notification-factory.ts';
 import { GroupingStage } from './application/pipeline/grouping-stage.ts';
@@ -24,7 +23,6 @@ import { InboxService } from './application/services/inbox-service.ts';
 import { PreferenceService } from './application/services/preference-service.ts';
 import { type CoreConfig, DEFAULT_CORE_CONFIG } from './config.ts';
 import { ALL_EVENT_KINDS } from './domain/index.ts';
-import { InMemoryDeadLetterQueue } from './infrastructure/memory/dead-letter-queue.ts';
 import { InMemoryInbox } from './infrastructure/memory/in-memory-inbox.ts';
 import { InMemoryPreferenceRepository } from './infrastructure/memory/preference-repository.ts';
 import { InMemoryContentCatalog, InMemoryPlayerDirectory } from './infrastructure/memory/reference-data.ts';
@@ -54,7 +52,6 @@ export interface CorePorts {
   readonly directory?: PlayerDirectory;
   readonly catalog?: ContentCatalog;
   readonly inboxEpoch?: string;
-  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /** Deep-partial config override. */
@@ -119,17 +116,13 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
   ] as const;
   const grouping = new GroupingStage(cfg.grouping, clock, scheduler);
   const renderer = new NotificationRenderer(EN_CATALOG, directory, catalog, new NotificationFactory(ids, clock));
-  const dlq = new InMemoryDeadLetterQueue(cfg.dlqCapacity);
   const delivery = new DeliveryRouter({
     channels: [new InAppChannel(ports.sender)],
-    retry: exponentialBackoff(cfg.retry),
-    dlq,
     prefs,
     inbox,
     clock,
     metrics,
     logger,
-    ...(ports.sleep ? { sleep: ports.sleep } : {}),
   });
   const dispatcher = new NotificationDispatcher({
     resolvers,
@@ -153,7 +146,6 @@ export function buildCore(ports: CorePorts, overrides: CoreConfigOverrides = {})
     dispatcher,
     grouping,
     inbox,
-    dlq,
     directory,
     catalog,
     gameEngine: new GameEngine(bus, ids, clock),

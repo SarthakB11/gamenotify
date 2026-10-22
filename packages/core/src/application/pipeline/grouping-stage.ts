@@ -61,7 +61,7 @@ export class GroupingStage {
     this.#onFlush = handler;
   }
 
-  /** Held events folded into the leading notification's actor (repeats) rather than counted in a digest. */
+  /** Follower events that repeat the leading follower and are therefore not counted in a digest (attacks never are). */
   get absorbedRepeats(): number {
     return this.#absorbed;
   }
@@ -145,14 +145,27 @@ export class GroupingStage {
       this.#onFlush(g.last);
       return;
     }
-    const others = g.actors.length > 0;
-    const groupCount = others && g.distinct.size === 1 ? g.heldOthers : g.held;
-    this.#absorbed += g.held - groupCount;
+    if (g.last.type === NotificationType.NEW_FOLLOWER) {
+      const others = g.actors.length > 0;
+      const groupCount = others && g.distinct.size === 1 ? g.heldOthers : g.held;
+      this.#absorbed += g.held - groupCount;
+      this.#onFlush({
+        ...g.last,
+        groupCount,
+        actorIds: [...g.actors],
+        distinctActors: Math.max(1, g.distinct.size),
+        ...(lead !== undefined ? { leadingActorId: lead } : {}),
+      });
+      return;
+    }
+    // An attack digest counts every held attack. When the leading attacker also repeated, they are named
+    // first, ahead of the new attackers, so the message neither drops them nor claims a repeat for anyone else.
+    const repeated = lead !== undefined && !repeatOnly && g.held > g.heldOthers;
     const out: NotificationIntent = {
       ...g.last,
-      groupCount,
-      actorIds: repeatOnly ? [lead] : [...g.actors],
-      distinctActors: repeatOnly ? 1 : Math.max(1, g.distinct.size),
+      groupCount: g.held,
+      actorIds: repeatOnly ? [lead] : repeated ? [lead, ...g.actors] : [...g.actors],
+      distinctActors: repeatOnly ? 1 : Math.max(1, g.distinct.size + (repeated ? 1 : 0)),
       ...(lead !== undefined ? { leadingActorId: lead } : {}),
     };
     this.#onFlush(out);

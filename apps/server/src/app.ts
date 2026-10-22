@@ -23,7 +23,6 @@ import { StreamTicketStore } from './auth/stream-tickets.ts';
 import type { ServerConfig } from './config.ts';
 import { problem } from './http/problem.ts';
 import {
-  dlqQuery,
   idParams,
   loginBody,
   pageQuery,
@@ -106,6 +105,8 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
         useDefaults: true,
         allErrors: false,
         allowUnionTypes: true,
+        // oneOf on `kind` validates only the matching branch, so errors name that kind's fields alone.
+        discriminator: true,
       },
     },
     return503OnClosing: true,
@@ -156,14 +157,31 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     return payload;
   });
   server.setErrorHandler((error: FastifyError, _req, reply) => {
-    if (error.validation) return problem(reply, 400, 'Invalid request', error.message);
+    if (error.validation) {
+      const first = error.validation[0];
+      const extra = first?.keyword === 'additionalProperties' ? first.params.additionalProperty : undefined;
+      return problem(
+        reply,
+        400,
+        'Invalid request',
+        typeof extra === 'string'
+          ? `${error.validationContext ?? 'body'} must NOT have additional property '${extra}'`
+          : error.message,
+      );
+    }
     const status = error.statusCode && error.statusCode < 500 ? error.statusCode : 500;
     if (status >= 500) server.log.error({ err: error }, 'unhandled error');
     return problem(reply, status, status >= 500 ? 'Internal Server Error' : error.message);
   });
 
   const requirePlayer = async (req: FastifyRequest, reply: FastifyReply) => {
-    if (req.playerId === null) return problem(reply, 401, 'Unauthorized', 'Log in via POST /v1/dev/login');
+    if (req.playerId !== null) return;
+    return problem(
+      reply,
+      401,
+      'Unauthorized',
+      config.env === 'production' ? 'A session token is required' : 'Log in via POST /v1/dev/login',
+    );
   };
   /** `?ticket=` (browser) is consumed here and wins over any header; otherwise Bearer/cookie as for any route. */
   const requireStreamAuth = async (req: FastifyRequest, reply: FastifyReply) => {
@@ -424,12 +442,6 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
       }
       return reply.code(202).send({ action, args, results });
     },
-  );
-
-  server.get<{ Querystring: { limit: number } }>(
-    '/v1/admin/dlq',
-    { schema: { querystring: dlqQuery }, preHandler: requireInternalKey },
-    async (req) => core.dlq.list(req.query.limit).map((d) => ({ ...d, entry: toInboxEntryDto(d.entry) })),
   );
 
   // ── Static web client (single origin → no CORS, cookies just work) ─────────

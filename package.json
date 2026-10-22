@@ -10,9 +10,9 @@
   },
   "scripts": {
     "build": "tsc -b && pnpm --filter @gamenotify/web build",
-    "start": "node apps/server/dist/main.js",
+    "start": "node --env-file-if-exists=.env apps/server/dist/main.js",
     "demo": "node apps/demo/dist/main.js",
-    "dev": "node --conditions=development --watch apps/server/src/main.ts",
+    "dev": "node --env-file-if-exists=.env --conditions=development --watch apps/server/src/main.ts",
     "dev:web": "pnpm --filter @gamenotify/web dev",
     "demo:dev": "node --conditions=development apps/demo/src/main.ts",
     "test": "vitest run",

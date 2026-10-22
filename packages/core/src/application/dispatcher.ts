@@ -173,7 +173,6 @@ export class NotificationDispatcher {
     const notification = entry.notification;
     d.metrics.inc('notifications_created_total', { type: notification.type, mode });
     for (const o of this.#observers) o.onCreated?.(entry);
-    if (mode !== DeliveryMode.LIVE) return;
 
     const pending = d.delivery.deliver(entry);
     if (pending === undefined) return; // delivered synchronously: zero Promise allocations

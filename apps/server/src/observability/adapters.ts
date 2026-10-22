@@ -29,7 +29,6 @@ const HELP: Record<string, string> = {
   notifications_delivered_total: 'Delivery attempts by channel and result',
   rate_limited_total: 'Notifications downgraded to silent by the rate limiter',
   dispatch_latency_seconds: 'Event → send() latency inside the process',
-  dlq_size: 'Dead-lettered deliveries',
   catalog_miss_total: 'Lookups for unknown catalog items',
   sse_connections: 'Open SSE connections',
   sse_evictions_total: 'SSE connections closed by the server',

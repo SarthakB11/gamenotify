@@ -116,6 +116,41 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(e?.notification.message).toBe("Congratulations! You've reached level 20!");
   });
 
+  it('a sender that carries the silent flag also receives muted notifications, marked SILENT', async () => {
+    const { core, sender } = makeCore();
+    sender.carriesSilent = true;
+    core.gameEngine.playerLeveledUp(1, 19);
+    await core.settle();
+    core.preferences.patch(PlayerId(1), { muteForMinutes: 30 });
+    core.gameEngine.playerLeveledUp(1, 20);
+    await core.settle();
+    expect(sender.sent.map((e) => [e.mode, e.notification.message])).toEqual([
+      ['LIVE', "Congratulations! You've reached level 19!"],
+      ['SILENT', "Congratulations! You've reached level 20!"],
+    ]);
+  });
+
+  it('a silent digest is also delivered to a sender that carries the flag', async () => {
+    const { core, sender, scheduler } = makeCore();
+    sender.carriesSilent = true;
+    for (const f of [2, 3, 4]) core.socialSystem.playerFollowed(f, 1);
+    await core.settle();
+    core.preferences.patch(PlayerId(1), { muteForMinutes: 30 });
+    scheduler.advance(10_000);
+    await core.settle();
+    expect(sender.sent.map((e) => e.mode)).toEqual(['LIVE', 'SILENT']);
+  });
+
+  it('disabled categories are never delivered, even to a sender that carries the silent flag', async () => {
+    const { core, sender } = makeCore();
+    sender.carriesSilent = true;
+    core.preferences.patch(PlayerId(1), { categories: { GAME: false } });
+    core.gameEngine.playerLeveledUp(1, 20);
+    await core.settle();
+    expect(sender.sent).toHaveLength(0);
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(0);
+  });
+
   it('groups a follower burst: first immediately, the rest as one digest', async () => {
     const { core, sender, scheduler } = makeCore({ grouping: { windowMs: 1_000, maxWindowMs: 5_000 } });
     for (const f of [2, 3, 4, 5, 6]) core.socialSystem.playerFollowed(f, 1);
@@ -184,7 +219,21 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
       ]);
     });
 
-    it('property: a digest never names the leading actor unless it is a "more" repeat', async () => {
+    it('Bram, Bram, Kael: the digest counts both held attacks and names both attackers', async () => {
+      expect(await burst('attack', [2, 2, 3])).toEqual([
+        "You're under attack by Player 'Bram'!",
+        "You're under attack by Player 'Bram' and Player 'Kael'! (2 more attacks)",
+      ]);
+    });
+
+    it('Bram, Kael, Kael: new attackers only, every held attack counted', async () => {
+      expect(await burst('attack', [2, 3, 3])).toEqual([
+        "You're under attack by Player 'Bram'!",
+        "Player 'Kael' attacked you 2 times!",
+      ]);
+    });
+
+    it('property: a digest names the leading actor only when it repeated, and a follower digest never does', async () => {
       await fc.assert(
         fc.asyncProperty(
           fc.constantFrom('follow', 'attack'),
@@ -196,8 +245,12 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
             const digest = messages[1];
             if (digest === undefined) return;
             if (digest.includes(`'${lead}'`)) {
-              expect(new Set(actors).size).toBe(1);
-              expect(digest).toContain(' more ');
+              expect(type).toBe('attack');
+              expect(actors.slice(1)).toContain(actors[0]);
+              if (new Set(actors).size === 1) expect(digest).toContain(' more ');
+              else expect(digest).toMatch(/ \(\d+ more attacks?\)$/);
+            } else if (type === 'attack') {
+              expect(actors.slice(1)).not.toContain(actors[0]);
             }
           },
         ),
@@ -314,14 +367,16 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(sender.messages()).toHaveLength(2);
   });
 
-  it('a failing sender is retried then dead-lettered without blocking other players', async () => {
-    const { core, sender } = makeCore();
+  it('a failing sender is counted and logged, keeps the entry in the inbox and does not block other players', async () => {
+    const { core, sender, metrics, logger } = makeCore();
     const original = sender.send.bind(sender);
     sender.send = (entry) => (entry.notification.recipientId === 1 ? 'FAILED' : original(entry));
     core.gameEngine.playerLeveledUp(1, 2);
     core.gameEngine.playerLeveledUp(2, 2);
     await core.settle();
-    expect(core.dlq.size).toBe(1);
+    expect(metrics.count('notifications_delivered_total', { channel: 'in_app', result: 'FAILED' })).toBe(1);
+    expect(logger.lines.filter((l) => l.level === 'warn')).toMatchObject([{ fields: { playerId: 1, seq: 1 } }]);
+    expect(core.inboxService.page(1 as never, null, 10).entries).toHaveLength(1);
     expect(sender.sent.map((e) => e.notification.recipientId)).toEqual([2]);
   });
 

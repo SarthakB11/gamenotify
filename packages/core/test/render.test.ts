@@ -74,6 +74,20 @@ describe('message catalog (exact strings)', () => {
     expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(5), PlayerId(6)], distinctActors: 3, groupCount: 3 })).toBe(
       "You're under attack by Player 'Zed' and 2 others!",
     );
+    // Leading attacker repeated and new attackers joined: name them all, count every held attack.
+    const mix = { type: 'PVP_ATTACKED', leadingActorId: PlayerId(5), groupCount: 2 } as const;
+    expect(msg({ ...mix, actorIds: [PlayerId(5), PlayerId(3)], distinctActors: 2 })).toBe(
+      "You're under attack by Player 'Zed' and Player 'Kael'! (2 more attacks)",
+    );
+    expect(msg({ ...mix, groupCount: 1, actorIds: [PlayerId(5), PlayerId(3)], distinctActors: 2 })).toBe(
+      "You're under attack by Player 'Zed' and Player 'Kael'! (1 more attack)",
+    );
+    expect(msg({ ...mix, groupCount: 4, actorIds: [PlayerId(5), PlayerId(3), PlayerId(4)], distinctActors: 3 })).toBe(
+      "You're under attack by Player 'Zed', Player 'Kael' and Player 'Mira'! (4 more attacks)",
+    );
+    expect(
+      msg({ ...mix, groupCount: 9, actorIds: [PlayerId(5), PlayerId(3), PlayerId(4), PlayerId(2)], distinctActors: 7 }),
+    ).toBe("You're under attack by Player 'Zed', Player 'Kael', Player 'Mira', Player 'Bram' and 3 others! (9 more attacks)");
     expect(
       renderer.render(intent({ type: 'NEW_FOLLOWER', actorIds: [PlayerId(3)], distinctActors: 2, groupCount: 2 })).title,
     ).toBe('New Followers');

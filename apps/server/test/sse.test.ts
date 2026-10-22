@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AppOptions } from '../src/app.ts';
-import { api, login, openStream, openTicketStream, sleep, startApp, streamTicket } from './support.ts';
+import { api, login, openStream, openTicketStream, sleep, startApp, streamTicket, until } from './support.ts';
 
 let stop: (() => Promise<void>) | undefined;
 afterEach(async () => {
@@ -94,7 +94,7 @@ describe('GET /v1/stream (SSE gateway)', () => {
     s.close();
   });
 
-  it('muted notifications are not pushed live but are replayed (flagged silent)', async () => {
+  it('muted notifications are pushed live flagged silent, and replayed the same way', async () => {
     const { base, app, simulate } = await setup();
     const aria = await login(base, 1);
     const call = api(base, aria);
@@ -103,13 +103,47 @@ describe('GET /v1/stream (SSE gateway)', () => {
     await s.waitFor((e) => e.some((x) => x.event === 'hello'));
     await simulate(aria, 'playerLeveledUp', [1, 7]);
     await app.core.settle();
-    await sleep(100);
-    expect(s.notifications()).toEqual([]);
+    await s.waitFor((e) => e.some((x) => x.event === 'notification'));
+    expect(s.notifications()).toMatchObject([{ seq: 1, silent: true }]);
     s.close();
 
     const s2 = await openStream(base, aria, `${app.core.inbox.epoch}-0`);
     await s2.waitFor((e) => e.some((x) => x.event === 'notification'));
     expect(s2.notifications()[0]).toMatchObject({ seq: 1, silent: true });
+    s2.close();
+  });
+
+  it('silent entries are pushed to an open stream flagged silent, and replayed once in order', async () => {
+    const { base, app, simulate } = await setup();
+    const aria = await login(base, 1);
+    const call = api(base, aria);
+    const s = await openStream(base, aria);
+    await s.waitFor((e) => e.some((x) => x.event === 'hello'));
+    await simulate(aria, 'playerLeveledUp', [1, 2]);
+    await call('/v1/preferences', { method: 'PATCH', json: { muteForMinutes: 10 } });
+    await simulate(aria, 'playerLeveledUp', [1, 3]);
+    await simulate(aria, 'playerLeveledUp', [1, 4]);
+    await call('/v1/preferences', { method: 'PATCH', json: { muteForMinutes: 0 } });
+    await simulate(aria, 'playerLeveledUp', [1, 5]);
+    await s.waitFor((e) => e.filter((x) => x.event === 'notification').length === 4);
+    expect(s.notifications().map((d) => [d.seq, d.silent])).toEqual([
+      [1, false],
+      [2, true],
+      [3, true],
+      [4, false],
+    ]);
+    const firstId = s.events.find((x) => x.event === 'notification')?.id as string;
+    s.close();
+
+    const s2 = await openStream(base, aria, firstId);
+    await s2.waitFor((e) => e.filter((x) => x.event === 'notification').length === 3);
+    await sleep(100);
+    expect(s2.notifications().map((d) => [d.seq, d.silent])).toEqual([
+      [2, true],
+      [3, true],
+      [4, false],
+    ]);
+    expect(app.core.inbox.lastSeq(1 as never)).toBe(4);
     s2.close();
   });
 
@@ -128,7 +162,7 @@ describe('GET /v1/stream (SSE gateway)', () => {
   it('sends heartbeats to idle connections', async () => {
     const { base } = await setup({ SSE_HEARTBEAT_MS: '100' });
     const s = await openStream(base, await login(base, 1));
-    await sleep(350);
+    await until(() => s.comments.length >= 1);
     expect(s.comments.length).toBeGreaterThanOrEqual(1);
     s.close();
   });
@@ -140,7 +174,7 @@ describe('GET /v1/stream (SSE gateway)', () => {
     await a.waitFor((e) => e.length > 0);
     const b = await openStream(base, aria);
     await b.waitFor((e) => e.length > 0);
-    await sleep(50);
+    await until(() => app.registry.size === 1);
     expect(app.registry.size).toBe(1);
     a.close();
     b.close();

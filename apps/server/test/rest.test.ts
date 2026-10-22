@@ -61,6 +61,21 @@ describe('auth & health', () => {
     });
     expect((await api(base)('/v1/dev/login', { method: 'POST', json: { playerId: 1 } })).status).toBe(404);
   });
+
+  it('the 401 detail points at dev login only where that route exists', async () => {
+    const dev = await setup();
+    expect((await api(dev.base)('/v1/me')).body).toMatchObject({ detail: 'Log in via POST /v1/dev/login' });
+    await stop?.();
+    const { base } = await setup({
+      NODE_ENV: 'production',
+      AUTH_SECRET: 'prod-test-secret-value',
+      INTERNAL_API_KEY: 'prod-test-internal-key',
+      LOG_LEVEL: 'silent',
+    });
+    const r = await api(base)('/v1/me');
+    expect(r.status).toBe(401);
+    expect((r.body as { detail: string }).detail).toBe('A session token is required');
+  });
 });
 
 describe('inbox API', () => {
@@ -205,6 +220,29 @@ describe('POST /v1/events (ingestion for real producers)', () => {
     expect((bad.body as { detail: string }).detail).toMatch(/newLevel/);
   });
 
+  it('reports only the missing field for a known kind with a bad body', async () => {
+    const { base } = await setup();
+    const r = await api(base)('/v1/events', {
+      method: 'POST',
+      headers: key,
+      json: { kind: 'game.player_leveled_up', playerId: 1 },
+    });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ title: 'Invalid request', detail: "body must have required property 'newLevel'" });
+    expect((r.body as { detail: string }).detail).not.toMatch(/oneOf|must match|itemId|attackerId/);
+  });
+
+  it('reports only the extra field for a known kind with an unexpected property', async () => {
+    const { base } = await setup();
+    const r = await api(base)('/v1/events', {
+      method: 'POST',
+      headers: key,
+      json: { kind: 'game.player_leveled_up', playerId: 1, newLevel: 2, extra: true },
+    });
+    expect(r.status).toBe(400);
+    expect((r.body as { detail: string }).detail).toBe("body must NOT have additional property 'extra'");
+  });
+
   it('returns 503 + Retry-After when the bus is full', async () => {
     const { base, app } = await setup({ BUS_CAPACITY: '2' });
     // Stall the consumer so the queue fills up deterministically.
@@ -221,32 +259,6 @@ describe('POST /v1/events (ingestion for real producers)', () => {
     expect(statuses).toContain(503);
     expect(statuses[0]).toBe(202);
     release();
-  });
-
-  it('admin DLQ requires the internal key', async () => {
-    const { base } = await setup();
-    expect((await api(base)('/v1/admin/dlq')).status).toBe(401);
-    expect((await api(base)('/v1/admin/dlq', { headers: key })).body).toEqual([]);
-  });
-});
-
-describe('GET /v1/admin/dlq limit', () => {
-  const key = { 'x-internal-key': 'dev-internal-key' };
-
-  it('honours the limit parameter (newest first), defaults to 100 and validates the bound', async () => {
-    const { base, app } = await setup();
-    app.core.gameEngine.playerLeveledUp(1, 2);
-    await app.core.settle();
-    const entry = app.core.inboxService.page(1 as never, null, 1).entries[0]!;
-    for (let i = 1; i <= 120; i++) app.core.dlq.put({ entry, channel: 'in-app', attempts: i, at: i, error: 'boom' });
-    const get = (q: string) => api(base)(`/v1/admin/dlq${q}`, { headers: key });
-    expect((await get('')).body).toHaveLength(100);
-    const three = await get('?limit=3');
-    expect(three.body.map((d: { attempts: number }) => d.attempts)).toEqual([120, 119, 118]);
-    expect((await get('?limit=1000')).body).toHaveLength(120);
-    expect((await get('?limit=0')).status).toBe(400);
-    expect((await get('?limit=1001')).status).toBe(400);
-    expect((await get('?limit=abc')).status).toBe(400);
   });
 });
 
@@ -317,13 +329,14 @@ describe('operational hardening', () => {
 
   it('compares the internal key exactly: wrong, wrong-length, empty and missing keys are refused', async () => {
     const { base } = await setup();
-    const call = (headers: Record<string, string>) => api(base)('/v1/admin/dlq', { headers });
+    const call = (headers: Record<string, string>) =>
+      api(base)('/v1/events', { method: 'POST', headers, json: { kind: 'game.player_leveled_up', playerId: 1, newLevel: 2 } });
     expect((await call({})).status).toBe(401);
     expect((await call({ 'x-internal-key': '' })).status).toBe(401);
     expect((await call({ 'x-internal-key': 'dev-internal-kez' })).status).toBe(401);
     expect((await call({ 'x-internal-key': 'dev-internal-key-and-more' })).status).toBe(401);
     expect((await call({ 'x-internal-key': 'x' })).status).toBe(401);
-    expect((await call(key)).status).toBe(200);
+    expect((await call(key)).status).toBe(202);
   });
 
   it('rejects events for players that are not in the directory (422) before publishing', async () => {

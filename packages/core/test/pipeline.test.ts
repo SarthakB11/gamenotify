@@ -178,6 +178,20 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(flushed[0]?.intent).toMatchObject({ groupCount: 2, actorIds: [2], distinctActors: 1, leadingActorId: 2 });
   });
 
+  it('PvP burst Bram, Bram, Kael: the digest accounts for both held attacks and names both attackers', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (const actor of [2, 2, 3]) g.offer(ctxFor('PVP_ATTACKED', clock.now(), actor, 'v'));
+    scheduler.advance(2_000);
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 2, actorIds: [2, 3], distinctActors: 2, leadingActorId: 2 });
+  });
+
+  it('PvP burst of new attackers only: every held attack is counted', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (const actor of [2, 3, 3, 4]) g.offer(ctxFor('PVP_ATTACKED', clock.now(), actor, 'v'));
+    scheduler.advance(2_000);
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 3, actorIds: [3, 4], distinctActors: 2, leadingActorId: 2 });
+  });
+
   it('cancel() forgets a group that has held nothing, so the next event is a leading edge again', () => {
     const { g, clock } = make();
     expect(g.offer(ctxFor('NEW_FOLLOWER', clock.now(), 2, 'k'))).toBe('pass');
@@ -228,7 +242,35 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     expect(flushed).toHaveLength(1);
   });
 
-  it('property: conservation — passed + Σ groupCount(flushed) + absorbed repeats = offered', () => {
+  it('property: conservation — for PvP attacks, passed + Σ groupCount(flushed) = offered', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            gap: fc.integer({ min: 0, max: 3_000 }),
+            key: fc.constantFrom('a', 'b'),
+            actor: fc.integer({ min: 2, max: 9 }),
+          }),
+          {
+            maxLength: 100,
+          },
+        ),
+        (events) => {
+          const { g, clock, scheduler, flushed } = make(1_000, 4_000);
+          let passed = 0;
+          for (const e of events) {
+            scheduler.advance(e.gap);
+            if (g.offer(ctxFor('PVP_ATTACKED', clock.now(), e.actor, e.key)) === 'pass') passed++;
+          }
+          scheduler.advance(10_000);
+          const grouped = flushed.reduce((n, f) => n + (f.intent.groupCount ?? 1), 0);
+          expect(passed + grouped).toBe(events.length);
+        },
+      ),
+    );
+  });
+
+  it('property: conservation — for followers, passed + Σ groupCount(flushed) + absorbed repeats of the leading follower = offered', () => {
     fc.assert(
       fc.property(
         fc.array(

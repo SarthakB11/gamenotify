@@ -87,11 +87,6 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       },
       grouping: { windowMs: groupWindowMs, maxWindowMs: groupMaxWindowMs },
       inbox: { capacity: int(env, 'INBOX_CAPACITY', d.inbox.capacity, 1), ttlMs: int(env, 'INBOX_TTL_MS', d.inbox.ttlMs, 1) },
-      retry: {
-        maxAttempts: int(env, 'RETRY_MAX_ATTEMPTS', d.retry.maxAttempts, 1),
-        baseMs: int(env, 'RETRY_BASE_MS', d.retry.baseMs, 1),
-        capMs: int(env, 'RETRY_CAP_MS', d.retry.capMs, 1),
-      },
       minItemRarity: env.MIN_ITEM_RARITY ? parseRarity(env.MIN_ITEM_RARITY) : d.minItemRarity,
     },
   });

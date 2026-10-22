@@ -1,7 +1,6 @@
 import type { InboxEntry } from '../../domain/index.ts';
 import type {
   Clock,
-  DeadLetterQueue,
   DeliveryChannel,
   DeliveryResult,
   InboxRepository,
@@ -9,39 +8,31 @@ import type {
   Metrics,
   PreferenceRepository,
 } from '../../ports/index.ts';
-import type { RetryPolicy } from './retry-policy.ts';
 
 export interface DeliveryRouterDeps {
   readonly channels: readonly DeliveryChannel[];
-  readonly retry: RetryPolicy;
-  readonly dlq: DeadLetterQueue;
   readonly prefs: PreferenceRepository;
   /** Receives `markDelivered` when a channel pushed the entry; entries themselves are immutable. */
   readonly inbox: InboxRepository;
   readonly clock: Clock;
   readonly metrics: Metrics;
   readonly logger: Logger;
-  readonly sleep?: (ms: number) => Promise<void>;
 }
 
-const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms).unref());
-
 /**
- * Strategy over channels + retry with jittered backoff + dead-lettering.
- * RECIPIENT_OFFLINE is not a failure: the entry is already in the inbox and will be replayed on reconnect.
+ * Strategy over channels. There is no retry: a failed or throwing channel is logged and counted, and the entry
+ * stays in the inbox, so it is replayed when the player reconnects. RECIPIENT_OFFLINE is not a failure either.
  */
 export class DeliveryRouter {
   readonly #d: DeliveryRouterDeps;
-  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(deps: DeliveryRouterDeps) {
     this.#d = deps;
-    this.#sleep = deps.sleep ?? defaultSleep;
   }
 
   /**
    * Returns undefined when every channel completed synchronously (the common in-app case: no Promise
-   * allocations on the hot path); otherwise a Promise that settles when retries/async sends finish.
+   * allocations on the hot path); otherwise a Promise that settles (never rejects) when async sends finish.
    */
   deliver(entry: InboxEntry): Promise<void> | undefined {
     const prefs = this.#d.prefs.get(entry.notification.recipientId);
@@ -59,50 +50,39 @@ export class DeliveryRouter {
     let result: DeliveryResult | Promise<DeliveryResult>;
     try {
       result = channel.send(entry);
-    } catch {
-      return this.#withRetry(channel, entry, 1, 'FAILED');
+    } catch (e) {
+      this.#failed(channel, entry, e);
+      return undefined;
     }
-    if (result instanceof Promise) return this.#withRetry(channel, entry, 1, result);
-    if (result === 'FAILED') return this.#withRetry(channel, entry, 1, result);
-    this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result });
-    this.#markDelivered(entry, result);
+    if (result instanceof Promise) {
+      return result.then(
+        (r) => this.#settle(channel, entry, r),
+        (e: unknown) => this.#failed(channel, entry, e),
+      );
+    }
+    this.#settle(channel, entry, result);
     return undefined;
   }
 
-  #markDelivered(entry: InboxEntry, result: DeliveryResult): void {
+  #settle(channel: DeliveryChannel, entry: InboxEntry, result: DeliveryResult): void {
+    if (result === 'FAILED') {
+      this.#failed(channel, entry);
+      return;
+    }
+    this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result });
     if (result === 'DELIVERED') this.#d.inbox.markDelivered(entry.notification.recipientId, entry.seq, this.#d.clock.now());
   }
 
-  async #withRetry(
-    channel: DeliveryChannel,
-    entry: InboxEntry,
-    firstAttempt: number,
-    first: DeliveryResult | Promise<DeliveryResult>,
-  ): Promise<void> {
-    for (let attempt = firstAttempt; ; attempt++) {
-      let result: DeliveryResult;
-      let error = '';
-      try {
-        result = attempt === firstAttempt ? await first : await channel.send(entry);
-      } catch (e) {
-        result = 'FAILED';
-        error = e instanceof Error ? e.message : String(e);
-      }
-      this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result });
-      if (result !== 'FAILED') {
-        this.#markDelivered(entry, result);
-        return;
-      }
-      if (attempt >= this.#d.retry.maxAttempts) {
-        this.#d.dlq.put({ entry, channel: channel.name, attempts: attempt, at: this.#d.clock.now(), error });
-        this.#d.metrics.gauge('dlq_size', this.#d.dlq.size);
-        this.#d.logger.error(
-          { notificationId: entry.notification.id, channel: channel.name, attempts: attempt, error },
-          'delivery failed; dead-lettered',
-        );
-        return;
-      }
-      await this.#sleep(this.#d.retry.delay(attempt));
-    }
+  #failed(channel: DeliveryChannel, entry: InboxEntry, error?: unknown): void {
+    this.#d.metrics.inc('notifications_delivered_total', { channel: channel.name, result: 'FAILED' });
+    this.#d.logger.warn(
+      {
+        channel: channel.name,
+        playerId: entry.notification.recipientId,
+        seq: entry.seq,
+        ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }),
+      },
+      'delivery failed; the entry stays in the inbox for replay',
+    );
   }
 }

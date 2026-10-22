@@ -7,8 +7,6 @@ export interface CoreConfig {
   readonly rateLimit: { readonly capacity: number; readonly windowMs: number; readonly maxBuckets: number };
   readonly grouping: { readonly windowMs: number; readonly maxWindowMs: number };
   readonly inbox: { readonly capacity: number; readonly ttlMs: number };
-  readonly retry: { readonly maxAttempts: number; readonly baseMs: number; readonly capMs: number };
-  readonly dlqCapacity: number;
   readonly minItemRarity: ItemRarity;
 }
 
@@ -18,7 +16,5 @@ export const DEFAULT_CORE_CONFIG: CoreConfig = Object.freeze({
   rateLimit: { capacity: 20, windowMs: 60_000, maxBuckets: 200_000 },
   grouping: { windowMs: 10_000, maxWindowMs: 60_000 },
   inbox: { capacity: 200, ttlMs: 7 * 24 * 60 * 60_000 },
-  retry: { maxAttempts: 3, baseMs: 50, capMs: 2_000 },
-  dlqCapacity: 1_000,
   minItemRarity: Rarity.RARE,
 });

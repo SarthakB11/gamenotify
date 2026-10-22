@@ -72,6 +72,20 @@ export const EN_CATALOG = Object.freeze({
     const lead = leadActor(input);
     // "more times" is only true if the attacker also triggered the already-delivered first notification.
     const repeat = lead !== undefined && lead === input.intent.leadingActorId;
+    // The leading attacker repeated and others joined: the grouping stage lists them first among the actors.
+    const mixed = distinct > 1 && input.intent.leadingActorId !== undefined && repeat;
+    if (mixed) {
+      const named = (input.intent.actorIds ?? []).map((id) => quoted(input, id));
+      const extra = distinct - named.length;
+      const who =
+        extra > 0
+          ? `${named.join(', ')} and ${extra} ${plural(extra, 'other', 'others')}`
+          : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+      return {
+        title: 'Under Attack!',
+        message: `You're under attack by ${who}! (${count} more ${plural(count, 'attack', 'attacks')})`,
+      };
+    }
     if (distinct === 1 && (count > 1 || repeat)) {
       return {
         title: 'Under Attack!',

@@ -150,6 +150,8 @@ export type DeliveryResult = 'DELIVERED' | 'RECIPIENT_OFFLINE' | 'FAILED';
  */
 export interface NotificationSender {
   readonly name: string;
+  /** True when the receiver renders the entry's SILENT flag itself (no alert), so SILENT entries are sent to it too. */
+  readonly carriesSilent?: boolean;
   send(entry: InboxEntry): Promise<DeliveryResult> | DeliveryResult;
 }
 
@@ -158,18 +160,4 @@ export interface DeliveryChannel {
   readonly name: string;
   accepts(entry: InboxEntry, prefs: UserPreferences): boolean;
   send(entry: InboxEntry): Promise<DeliveryResult> | DeliveryResult;
-}
-
-export interface DeadLetter {
-  readonly entry: InboxEntry;
-  readonly channel: string;
-  readonly attempts: number;
-  readonly at: number;
-  readonly error: string;
-}
-
-export interface DeadLetterQueue {
-  put(item: DeadLetter): void;
-  list(limit: number): readonly DeadLetter[];
-  readonly size: number;
 }

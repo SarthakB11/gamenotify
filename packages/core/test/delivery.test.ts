@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { DeliveryChannel, DeliveryResult } from '../src/index.ts';
 import {
   DeliveryRouter,
   EventId,
-  exponentialBackoff,
   InAppChannel,
   type InboxEntry,
-  InMemoryDeadLetterQueue,
   InMemoryInbox,
   InMemoryPreferenceRepository,
   Notification,
@@ -29,25 +28,23 @@ const entry = (): InboxEntry => ({
   }),
 });
 
-const make = (sender: RecordingSender) => {
+const make = (sender: RecordingSender, extra: readonly DeliveryChannel[] = []) => {
   const clock = new FakeClock(5);
   const inbox = new InMemoryInbox({ capacity: 10, ttlMs: 1e9, clock });
   const metrics = new MemoryMetrics();
-  const dlq = new InMemoryDeadLetterQueue(2);
-  const sleeps: number[] = [];
+  const logger = new MemoryLogger();
   const router = new DeliveryRouter({
-    channels: [new InAppChannel(sender)],
-    retry: exponentialBackoff({ maxAttempts: 3, baseMs: 50, capMs: 2_000 }, () => 0.5),
-    dlq,
+    channels: [new InAppChannel(sender), ...extra],
     prefs: new InMemoryPreferenceRepository(),
     inbox,
     clock,
     metrics,
-    logger: new MemoryLogger(),
-    sleep: async (ms) => void sleeps.push(ms),
+    logger,
   });
-  return { router, metrics, dlq, sleeps, inbox };
+  return { router, metrics, logger, inbox };
 };
+
+const channel = (name: string, send: DeliveryChannel['send']): DeliveryChannel => ({ name, accepts: () => true, send });
 
 describe('DeliveryRouter', () => {
   it('records delivery through the inbox port, leaving the entry it was given untouched', async () => {
@@ -67,44 +64,67 @@ describe('DeliveryRouter', () => {
     expect(metrics.count('notifications_delivered_total', { channel: 'in_app', result: 'DELIVERED' })).toBe(1);
   });
 
-  it('does not retry an offline recipient (the inbox already has it)', async () => {
+  it('completes synchronously (no Promise) when every channel is synchronous', () => {
+    const { router } = make(new RecordingSender());
+    expect(router.deliver(entry())).toBeUndefined();
+  });
+
+  it('does not log or mark an offline recipient as failed (the inbox already has it)', async () => {
     const sender = new RecordingSender();
     sender.result = 'RECIPIENT_OFFLINE';
-    const { router, sleeps, dlq } = make(sender);
-    await router.deliver(entry());
-    expect(sleeps).toEqual([]);
-    expect(dlq.size).toBe(0);
+    const { router, logger, inbox, metrics } = make(sender);
+    const stored = inbox.append(entry().notification, 'LIVE');
+    await router.deliver(stored);
+    expect(logger.lines).toEqual([]);
+    expect(metrics.count('notifications_delivered_total', { channel: 'in_app', result: 'RECIPIENT_OFFLINE' })).toBe(1);
+    expect(inbox.since(PlayerId(1), 0, 10)).toMatchObject({ entries: [{ seq: 1, deliveredAt: null }] });
   });
 
-  it('retries failures with jittered exponential backoff, then dead-letters', async () => {
+  it('counts and logs a FAILED result once, without retrying, and keeps the entry in the inbox', async () => {
     const sender = new RecordingSender();
-    sender.result = () => {
+    sender.result = () => 'FAILED';
+    const { router, logger, inbox, metrics } = make(sender);
+    const stored = inbox.append(entry().notification, 'LIVE');
+    expect(router.deliver(stored)).toBeUndefined();
+    expect(metrics.count('notifications_delivered_total', { channel: 'in_app', result: 'FAILED' })).toBe(1);
+    expect(logger.lines).toMatchObject([{ level: 'warn', fields: { channel: 'in_app', playerId: 1, seq: 1 } }]);
+    expect(inbox.since(PlayerId(1), 0, 10)).toMatchObject({ entries: [{ seq: 1, deliveredAt: null }] });
+  });
+
+  it('a throwing channel is logged with its error and does not stop the other channels', async () => {
+    const sender = new RecordingSender();
+    const boom = channel('boom', () => {
       throw new Error('socket hung up');
-    };
-    const { router, sleeps, dlq } = make(sender);
-    await router.deliver(entry());
-    expect(sleeps).toEqual([50, 100]); // 0.5 × 50·2^1, 0.5 × 50·2^2
-    expect(dlq.list(10)).toMatchObject([{ channel: 'in_app', attempts: 3, error: 'socket hung up' }]);
-  });
-
-  it('recovers when a retry succeeds', async () => {
-    const sender = new RecordingSender();
-    let calls = 0;
-    sender.result = () => (++calls < 2 ? 'FAILED' : 'DELIVERED');
-    const { router, dlq } = make(sender);
+    });
+    const { router, logger, metrics } = make(sender, [boom]);
     await router.deliver(entry());
     expect(sender.sent).toHaveLength(1);
-    expect(dlq.size).toBe(0);
+    expect(metrics.count('notifications_delivered_total', { channel: 'boom', result: 'FAILED' })).toBe(1);
+    expect(logger.lines).toMatchObject([
+      { level: 'warn', fields: { channel: 'boom', playerId: 1, seq: 1, error: 'socket hung up' } },
+    ]);
   });
 
-  it('DLQ is bounded', () => {
-    const dlq = new InMemoryDeadLetterQueue(2);
-    for (let i = 0; i < 3; i++) dlq.put({ entry: entry(), channel: String(i), attempts: 1, at: i, error: '' });
-    expect(dlq.list(10).map((d) => d.channel)).toEqual(['2', '1']);
+  it('a rejecting async channel settles without rejecting and is counted as FAILED', async () => {
+    const sender = new RecordingSender();
+    const slow = channel('slow', () => Promise.reject(new Error('timeout')));
+    const { router, logger, metrics } = make(sender, [slow]);
+    await expect(router.deliver(entry())).resolves.toBeUndefined();
+    expect(sender.sent).toHaveLength(1);
+    expect(metrics.count('notifications_delivered_total', { channel: 'slow', result: 'FAILED' })).toBe(1);
+    expect(logger.lines).toMatchObject([{ level: 'warn', fields: { channel: 'slow', error: 'timeout' } }]);
   });
 
-  it('backoff is capped', () => {
-    const p = exponentialBackoff({ maxAttempts: 10, baseMs: 100, capMs: 1_000 }, () => 0.999);
-    expect(p.delay(10)).toBeLessThan(1_000);
+  it('an async channel resolving FAILED is counted, an async DELIVERED marks the inbox', async () => {
+    const sender = new RecordingSender();
+    const results: DeliveryResult[] = ['FAILED', 'DELIVERED'];
+    const asyncChannel = channel('async', () => Promise.resolve(results.shift() as DeliveryResult));
+    const { router, metrics, inbox } = make(sender, [asyncChannel]);
+    const stored = inbox.append(entry().notification, 'LIVE');
+    await router.deliver(stored);
+    expect(metrics.count('notifications_delivered_total', { channel: 'async', result: 'FAILED' })).toBe(1);
+    await router.deliver(stored);
+    expect(metrics.count('notifications_delivered_total', { channel: 'async', result: 'DELIVERED' })).toBe(1);
+    expect(inbox.since(PlayerId(1), 0, 10)).toMatchObject({ entries: [{ seq: 1, deliveredAt: 5 }] });
   });
 });

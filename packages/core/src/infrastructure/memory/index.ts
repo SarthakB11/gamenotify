@@ -1,4 +1,3 @@
-export * from './dead-letter-queue.ts';
 export * from './in-memory-inbox.ts';
 export * from './preference-repository.ts';
 export * from './reference-data.ts';

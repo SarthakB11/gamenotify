@@ -71,6 +71,7 @@ export const seqIds = (): IdGenerator => {
 /** Records everything "delivered" to the fake game client. */
 export class RecordingSender implements NotificationSender {
   readonly name = 'recording';
+  carriesSilent = false;
   readonly sent: InboxEntry[] = [];
   result: DeliveryResult | (() => DeliveryResult) = 'DELIVERED';
   send(entry: InboxEntry): DeliveryResult {

@@ -134,3 +134,12 @@ const openStreamAt = async (url: string, headers: Record<string, string>) => {
 };
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Poll until `pred` is true; fail after `ms`. For positive checks that must not depend on wall-clock speed. */
+export const until = async (pred: () => boolean, ms = 5_000, stepMs = 10): Promise<void> => {
+  const deadline = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error(`until: condition not met within ${ms} ms`);
+    await sleep(stepMs);
+  }
+};
