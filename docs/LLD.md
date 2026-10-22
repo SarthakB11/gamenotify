@@ -1076,7 +1076,8 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | `pnpm start` | `node apps/server/dist/main.js` | Server + web on `http://localhost:3000` |
 | `pnpm demo` | `node apps/demo/dist/main.js` | Console walkthrough of the brief's triggers and extras |
 | `pnpm dev` | `node --conditions=development --watch apps/server/src/main.ts` + `vite` | Native type stripping, no build step. `@gamenotify/core` exports a `development` condition that points at `src/*.ts` |
-| `pnpm test` | `vitest run --coverage` | Unit, property, integration |
+| `pnpm test` | `vitest run` | Unit, property, integration |
+| `pnpm test:coverage` | `vitest run --coverage` | The same suite with the coverage gate (what CI runs) |
 | `pnpm test:arch` | `vitest run packages/core/test/architecture.test.ts` | Layer rules |
 | `pnpm test:golden` | `node scripts/check-golden.ts` | Demo output vs `test/golden/demo.txt` |
 | `pnpm load:sse` | `node scripts/load-sse.ts` | SSE fan-out load test |
@@ -1088,12 +1089,12 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 
 - Multi-stage build. A `node:24-slim` build stage installs from the lockfile and manifests first (with a BuildKit cache mount) for layer caching, then runs `pnpm build` and `pnpm --filter @gamenotify/server deploy --prod`.
 - The runtime stage is `node:24-slim`, runs as a non-root user, and has a `HEALTHCHECK` on `/healthz`.
-- The image sets `NODE_ENV=production`, so it refuses to start without real `AUTH_SECRET` and `INTERNAL_API_KEY`. `docker compose up` sets `NODE_ENV=development` for the demo and exposes port 3000.
+- The image sets `NODE_ENV=production`, so it refuses to start without real `AUTH_SECRET` and `INTERNAL_API_KEY`. `docker compose up` sets `NODE_ENV=development` for the demo, sets the shorter grouping window `GROUP_WINDOW_MS=5000` (5 s) and exposes port 3000.
 
 **GitHub Actions (`ci.yml`):**
 
 - Matrix: Node 24 and 26 on Ubuntu.
-- Steps: `pnpm install --frozen-lockfile` → lint → typecheck → test (coverage) → arch → build → **demo golden check** (`pnpm demo | diff - test/golden/demo.txt`) → docker build.
+- Steps: `pnpm install --frozen-lockfile` → lint → typecheck → test (`pnpm test:coverage`) → arch → build → **demo golden check** (`pnpm test:golden`, which runs `node scripts/check-golden.ts`) in the `verify` job. The `docker` job (docker build) follows `verify`.
 - A separate `bench` job (after `verify`, Node 24) runs `pnpm bench`, which exits 1 when a budget is breached: worst p99 above 1 ms or end-to-end throughput below 50k events/s. The budgets themselves are generous for noisy shared runners; there is no extra 2× margin and no results upload. The job then builds and runs `scripts/load-sse.ts` at 2,000 connections, 1,000 events/s for 10 s. That script only prints delivery counts, latency percentiles and RSS and asserts nothing, so it is a smoke run, not a gate.
 
 ---
@@ -1205,4 +1206,4 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
 | NFR-3 memory | ≤ 300 MB @ 10k | 382 MB @ 10k (p99 27 ms): target missed | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
-**Test inventory:** 180 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.6% for `packages/core`, 97.2% for `apps/server` and 98.8% combined (1,205 of 1,220 lines, `pnpm test:coverage`).
+**Test inventory:** 183 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.6% for `packages/core`, 97.3% for `apps/server` and 98.8% combined (1,214 of 1,229 lines, `pnpm test:coverage`).

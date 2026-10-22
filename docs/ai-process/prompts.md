@@ -313,3 +313,23 @@ Prompts, verbatim:
 
 - `pnpm verify`: 3 of 3 cold runs green (`git clean -fdxq -e node_modules` before each), 180 tests, 15 to 16 s each.
 - `pnpm bench`: budgets met (~155k events/s, worst p99 17 µs).
+
+## 14. Session 10: Claude Code (pre-submit polish)
+
+Prompts, verbatim:
+
+> rank the project again
+
+> yes
+
+**Workflow and findings:**
+
+- The seventh cold review scored 8.3/10 and said to ship after a short README and config pass. A parallel clean-clone run passed every check (6 of 6 cold verify runs, 2 under load; every README number, anchor and route reproduced; Docker compose and the production run behaved as documented).
+- `GROUP_WINDOW_MS` above 60000 crashed boot with a raw `RangeError` from the grouping stage. The max window now follows the window when `GROUP_MAX_WINDOW_MS` is unset, and an explicit max below the window fails startup with a readable config error. Two config tests failed first.
+- An unknown or missing event `kind` on `POST /v1/events` returned a 400 listing every `oneOf` branch's failures. A `preValidation` check against `ALL_EVENT_KINDS` now returns one clear message naming the accepted kinds; a known kind with a bad field still gets the field error. The test failed first.
+- The README now says the production image serves the API only (no dev login for the bundled UI) and that compose uses a 5 s grouping window. The LLD scripts table and CI bullet were synced with `package.json` and `ci.yml`.
+- The review's remaining items were kept as interview topics rather than code changes: a digest whose emit fails drops its held events, repeat attacks by the leading attacker in a mixed PvP burst are not counted, and the demo imports the core `testing` helpers for virtual time.
+
+**Verification:**
+
+- `pnpm verify`: green, 183 tests. Coverage re-measured: core 99.6%, server 97.3%, combined 98.8% (1,214 of 1,229 lines).

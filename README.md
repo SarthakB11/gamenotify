@@ -95,6 +95,8 @@ docker run --rm -p 3000:3000 \
 
 The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and refuses to start unless `AUTH_SECRET` and `INTERNAL_API_KEY` are set to private values of 16+ characters (the public `dev-internal-key` is rejected).
 
+So the production image serves the ingest, inbox and stream API only. The bundled web UI loads, but its player picker has no dev login to call; use `docker compose up --build` for the interactive demo. Compose also sets `GROUP_WINDOW_MS=5000`, a 5 s grouping window, so a burst collapses quickly enough to watch.
+
 **Everything CI runs:**
 
 ```bash
@@ -130,7 +132,7 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 
 ### Core vs extras
 
-The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-21 (CSS, test files and `testing/` helpers excluded). The two "of which" extras rows are exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts` (pipeline stages); `delivery/delivery-router.ts`, `delivery/retry-policy.ts` and `dead-letter-queue.ts` (delivery retry and DLQ):
+The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-22 (CSS, test files and `testing/` helpers excluded). The two "of which" extras rows are exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts` (pipeline stages); `delivery/delivery-router.ts`, `delivery/retry-policy.ts` and `dead-letter-queue.ts` (delivery retry and DLQ):
 
 | Area | Lines | Brief or extra |
 |---|---|---|
@@ -139,7 +141,7 @@ The brief welcomes additional features once the core is complete. These were add
 | of which: delivery router with retry/backoff, retry policy, dead-letter queue | 146 | extra |
 | of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,331 | core path and its plumbing |
 | `apps/demo` (console demo) | 120 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,261 | extra |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,281 | extra |
 | `apps/web/src` (React client) | 618 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
 | `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
@@ -251,7 +253,7 @@ Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on a quiet machine: Linux
 | End-to-end through the bus | ≈ 183k events/s |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 180 passing · line coverage 98.8% across core and server (core alone 99.6%, server 97.2%) |
+| Tests | 183 passing · line coverage 98.8% across core and server (core alone 99.6%, server 97.3%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 
