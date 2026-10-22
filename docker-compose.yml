@@ -8,6 +8,7 @@ services:
       # Local demo only: the image defaults to production, which hides /v1/dev/* and needs real secrets
       # (AUTH_SECRET and INTERNAL_API_KEY, 16+ chars, not the dev default).
       NODE_ENV: development
+      HOST: 0.0.0.0 # a container must listen on all interfaces; the dev default is loopback
       LOG_LEVEL: info
       GROUP_WINDOW_MS: "5000"
     stop_grace_period: 15s

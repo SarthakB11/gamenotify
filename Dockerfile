@@ -23,6 +23,7 @@ FROM node:24-slim AS runtime
 # Production by default: refuses to start with dev secrets and hides /v1/dev/*.
 # Run with NODE_ENV=development for the demo UI (docker-compose.yml does).
 ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
     PORT=3000 \
     WEB_DIST_DIR=/app/web
 WORKDIR /app

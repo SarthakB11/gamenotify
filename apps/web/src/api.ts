@@ -63,6 +63,16 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/** Any other non-2xx response; `status` lets callers tell "route not served here" (404) from a real failure. */
+export class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+  }
+}
+
 export class Api {
   readonly #token: string | null;
 
@@ -78,7 +88,7 @@ export class Api {
     if (!res.ok) {
       const p = (await res.json().catch(() => ({}))) as { title?: string; detail?: string };
       const message = p.detail ?? p.title ?? `HTTP ${res.status}`;
-      throw res.status === 401 ? new UnauthorizedError(message) : new Error(message);
+      throw res.status === 401 ? new UnauthorizedError(message) : new HttpError(res.status, message);
     }
     return (res.status === 204 ? undefined : await res.json()) as T;
   }

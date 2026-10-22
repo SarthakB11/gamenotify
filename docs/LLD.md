@@ -886,6 +886,7 @@ Colours are disabled when `NO_COLOR` is set or stdout is not a TTY, which keeps 
        r = inbox.since(playerId, cursor.seq, REPLAY_LIMIT=500)
        if r.kind === 'resync' → send(event:'resync', data:{reason:'evicted'})
        else for e in r.entries → conn.write(frame(e)); conn.lastSeq = e.seq
+            then send(event:'replayed', data:{count})   // end-of-replay marker, no id
    else if cursor (epoch mismatch) → send(event:'resync', data:{reason:'restart'})
    else → send(event:'hello', data:{epoch, unread})       // first connect: client fetches page
 6. conn.goLive(): flush conn.pending where seq > conn.lastSeq; state = LIVE
@@ -903,6 +904,7 @@ data: {"seq":42,"silent":false,"notification":{"id":"0192…","type":"LEVEL_UP",
 
 ```
 
+- `event: replayed` (`data: {"count":2}`, no `id`) is sent once, right after the handshake replay, on a reconnect that resumed from a valid cursor (also when `count` is `0`). `notification` frames before it are history; frames after it are live. It is not sent on a first connect (`hello`) or after a `resync`, which have no replay. The web client raises toasts only for frames after it, instead of guessing from a quiet gap.
 - `data` is produced by a **precompiled `fast-json-stringify` serializer** generated from the frame's JSON Schema. It is about 2–5× faster than `JSON.stringify` for a fixed shape.
 - Frames are cached per entry (`WeakMap<InboxEntry, string>`) so multi-device fan-out serializes once.
 
@@ -968,8 +970,8 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 
 | Part | Detail |
 |---|---|
-| `useNotificationStream()` | Wraps `EventSource('/v1/stream', { withCredentials: true })`. Handles `hello`, `notification` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` |
-| Toasts | Only for `silent: false` (a silent frame still joins the inbox list and the unread count), and only for live frames: frames replayed after a reconnect (a burst right after `open`) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
+| `useNotificationStream()` | Wraps `EventSource`, opened on `/v1/stream?ticket=…&lastEventId=…` with a single-use ticket (§6.5). Handles `hello`, `notification`, `replayed` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` and `unread`: the server's count (from `hello` and each inbox page), kept in step locally (+1 per new unread frame, silent ones included; reduced by read and read-all), so it stays right beyond the 50 loaded entries |
+| Toasts | Only for `silent: false` (a silent frame still joins the inbox list and the unread count), and only for live frames: frames replayed after a reconnect (everything before the server's `replayed` event) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
 | Inbox panel | Initial `GET /v1/notifications`. Infinite scroll by `before`. Mark read on click |
 | Preferences panel | Category switches, a per-type override tri-state (inherit / on / off), mute 1 h, quiet hours. Uses `PATCH` with `If-Match` |
 | Simulator panel | Buttons that mirror the brief (`Level Up 1→15`, `Item 2 SwordOfAzeroth`, `Friend 3→1`, `Accept 1←3`), plus *Follower burst ×5*, *PvP*, *Duplicate event* |
@@ -1012,15 +1014,15 @@ export interface CorePorts {
 
 ## 8. Configuration
 
-Loaded once from env vars, validated at boot (integers, enums, production-required secrets), and frozen. An invalid config causes an exit with a readable error (`apps/server/src/config.ts`).
+Loaded once from env vars, validated at boot (integers, enums, production-required secrets), and frozen. An invalid config causes an exit with a readable error (`apps/server/src/config.ts`). `apps/server/src/main.ts` first loads an optional `.env` from the working directory with `process.loadEnvFile()`; variables already in the environment win over the file.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | HTTP listen |
+| `PORT` / `HOST` | `3000` / `127.0.0.1` (`0.0.0.0` when `NODE_ENV=production`) | HTTP listen. The dev login lets anyone who can reach the port impersonate a player, so development binds loopback only. The Dockerfile and `docker-compose.yml` set `HOST=0.0.0.0` explicitly |
 | `NODE_ENV` | `development` | `production` disables `/v1/dev/*`. The Docker image defaults to `production`; `docker-compose.yml` sets `development` for the demo |
 | `LOG_LEVEL` | `info` | pino level |
 | `AUTH_SECRET` | random (dev) | HMAC key; **required** in production (16+ chars) |
-| `INTERNAL_API_KEY` | `dev-internal-key` (dev) | for `/v1/events`, `/v1/admin/*`; in production **required**, 16+ chars, and the dev default is refused at boot |
+| `INTERNAL_API_KEY` | `dev-internal-key` (dev) | for `POST /v1/events` (the `x-internal-key` header); in production **required**, 16+ chars, and the dev default is refused at boot |
 | `BUS_CAPACITY` / `BUS_BATCH` | `65536` / `512` | Ring size (power of 2) / events per tick |
 | `DEDUP_TTL_MS` / `DEDUP_MAX_KEYS` | `600000` / `100000` | Idempotency window |
 | `RATE_CAPACITY` / `RATE_WINDOW_MS` | `20` / `60000` | Token bucket per player per category |
@@ -1098,7 +1100,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | T-22 | Performance | mitata | `dispatcher.handle` p99 < 1 ms. ≥ 50k events/s. Allocation per event tracked |
 | T-23 | Load | `scripts/load-sse.ts` | 10k EventSource connections, 1k notifications/s. Report p50/p99 end-to-end and RSS |
 
-**Coverage gate:** `packages/core` ≥ 90% lines and branches. The server is ≥ 80%.
+**Coverage gate:** `packages/core` ≥ 90% lines and branches. The server is ≥ 90% lines (`vitest.config.ts`).
 
 ---
 
@@ -1109,9 +1111,9 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | Script | Command | Purpose |
 |---|---|---|
 | `pnpm build` | `tsc -b && pnpm -F web build` | Compile all packages (project references) and the web bundle |
-| `pnpm start` | `node --env-file-if-exists=.env apps/server/dist/main.js` | Server + web on `http://localhost:3000` |
+| `pnpm start` | `node apps/server/dist/main.js` | Server + web on `http://localhost:3000` |
 | `pnpm demo` | `node apps/demo/dist/main.js` | Console walkthrough of the brief's triggers and extras |
-| `pnpm dev` | `node --env-file-if-exists=.env --conditions=development --watch apps/server/src/main.ts` + `vite` | Native type stripping, no build step. `@gamenotify/core` exports a `development` condition that points at `src/*.ts` |
+| `pnpm dev` | `node --conditions=development --watch apps/server/src/main.ts` + `vite` | Native type stripping, no build step. `@gamenotify/core` exports a `development` condition that points at `src/*.ts` |
 | `pnpm test` | `vitest run` | Unit, property, integration |
 | `pnpm test:coverage` | `vitest run --coverage` | The same suite with the coverage gate (what CI runs) |
 | `pnpm test:arch` | `vitest run packages/core/test/architecture.test.ts` | Layer rules |

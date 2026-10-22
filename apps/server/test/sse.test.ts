@@ -74,6 +74,41 @@ describe('GET /v1/stream (SSE gateway)', () => {
     s2.close();
   });
 
+  it('marks the end of the replay with a replayed frame, before any live frame', async () => {
+    const { base, app, simulate } = await setup();
+    const aria = await login(base, 1);
+    const s1 = await openStream(base, aria);
+    await simulate(aria, 'playerLeveledUp', [1, 2]);
+    await s1.waitFor((e) => e.some((x) => x.event === 'notification'));
+    const lastId = s1.events.filter((x) => x.event === 'notification').at(-1)?.id as string;
+    s1.close();
+    await sleep(50);
+    await simulate(aria, 'playerLeveledUp', [1, 3]);
+    await simulate(aria, 'playerLeveledUp', [1, 4]);
+    await app.core.settle();
+
+    const s2 = await openStream(base, aria, lastId);
+    await s2.waitFor((e) => e.some((x) => x.event === 'replayed'));
+    await simulate(aria, 'playerLeveledUp', [1, 5]);
+    await s2.waitFor((e) => e.filter((x) => x.event === 'notification').length === 3);
+    expect(s2.events.map((e) => e.event)).toEqual(['notification', 'notification', 'replayed', 'notification']);
+    expect(s2.events.find((e) => e.event === 'replayed')?.data).toEqual({ count: 2 });
+    s2.close();
+  });
+
+  it('sends replayed even when nothing was missed, and never on a fresh connect', async () => {
+    const { base, app } = await setup();
+    const aria = await login(base, 1);
+    const fresh = await openStream(base, aria);
+    await fresh.waitFor((e) => e.some((x) => x.event === 'hello'));
+    expect(fresh.events.some((e) => e.event === 'replayed')).toBe(false);
+    fresh.close();
+    const s = await openStream(base, aria, `${app.core.inbox.epoch}-0`);
+    await s.waitFor((e) => e.some((x) => x.event === 'replayed'));
+    expect(s.events).toMatchObject([{ event: 'replayed', data: { count: 0 } }]);
+    s.close();
+  });
+
   it('asks the client to resync after a server restart (epoch mismatch)', async () => {
     const { base } = await setup();
     const aria = await login(base, 1);

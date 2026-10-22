@@ -2,6 +2,11 @@ import { ALL_NOTIFICATION_TYPES } from '@gamenotify/core';
 
 const playerId = { type: 'integer', minimum: 1 } as const;
 const shortString = { type: 'string', minLength: 1, maxLength: 64 } as const;
+/** Item and challenge ids become display names, so "__" or "   " would render as an empty name. */
+export const NAME_ID_PATTERN = '[\\p{L}\\p{N}]';
+export const NAME_ID_HINT = 'must contain at least one letter or digit';
+export const hasLetterOrDigit = (v: string): boolean => new RegExp(NAME_ID_PATTERN, 'u').test(v);
+const nameId = { ...shortString, pattern: NAME_ID_PATTERN } as const;
 const clock = { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' } as const;
 
 export const loginBody = {
@@ -80,8 +85,8 @@ export const platformEventBody = {
   discriminator: { propertyName: 'kind' },
   oneOf: [
     event('game.player_leveled_up', { playerId, newLevel: { type: 'integer', minimum: 1 } }),
-    event('game.item_acquired', { playerId, itemId: shortString }),
-    event('game.challenge_completed', { playerId, challengeId: shortString }),
+    event('game.item_acquired', { playerId, itemId: nameId }),
+    event('game.challenge_completed', { playerId, challengeId: nameId }),
     event('game.pvp_attacked', { attackerId: playerId, victimId: playerId }),
     event('game.pvp_defeated', { winnerId: playerId, loserId: playerId }),
     event('social.friend_request_sent', { senderId: playerId, recipientId: playerId }),

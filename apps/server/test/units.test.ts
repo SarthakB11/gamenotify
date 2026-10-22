@@ -185,6 +185,18 @@ describe('DevAuthenticator', () => {
   });
 });
 
+describe('loadConfig host', () => {
+  it('binds loopback outside production and every interface in production', () => {
+    expect(loadConfig({ NODE_ENV: 'development' }).host).toBe('127.0.0.1');
+    expect(loadConfig({}).host).toBe('127.0.0.1');
+    expect(loadConfig({ NODE_ENV: 'test' }).host).toBe('127.0.0.1');
+    const prod = { NODE_ENV: 'production', AUTH_SECRET: 'a'.repeat(16), INTERNAL_API_KEY: 'k'.repeat(16) };
+    expect(loadConfig(prod).host).toBe('0.0.0.0');
+    expect(loadConfig({ ...prod, HOST: '10.0.0.5' }).host).toBe('10.0.0.5');
+    expect(loadConfig({ NODE_ENV: 'development', HOST: '0.0.0.0' }).host).toBe('0.0.0.0');
+  });
+});
+
 describe('loadConfig', () => {
   it('applies defaults and env overrides', () => {
     const c = loadConfig({ NODE_ENV: 'test', PORT: '8080', GROUP_WINDOW_MS: '1500', MIN_ITEM_RARITY: 'epic' });

@@ -22,7 +22,7 @@ socialSystem.friendRequestAccepted(1, 3)   → #3 Kael  [SOCIAL/FRIEND_ACCEPTED]
 | [`application/pipeline/preference-stage.ts`](packages/core/src/application/pipeline/preference-stage.ts#L16) | Reads the player's Game/Social enable/disable map; disabled means nothing is created | "Per-user preferences (simple map)" |
 | [`domain/notification.ts`](packages/core/src/domain/notification.ts#L44) | The immutable `Notification` class (assumption A1) | "`Notification` class" |
 | [`application/render/catalog-en.ts`](packages/core/src/application/render/catalog-en.ts#L53) | The exact message text for every notification type | "Clear, concise messages" |
-| [`application/delivery/in-app-channel.ts`](packages/core/src/application/delivery/in-app-channel.ts#L5) | The in-app channel: hands the notification to the existing client (`NotificationSender`) | "In-app, real-time delivery" |
+| [`application/delivery/in-app-channel.ts`](packages/core/src/application/delivery/in-app-channel.ts#L9) | The in-app channel: hands the notification to the existing client (`NotificationSender`) | "In-app, real-time delivery" |
 
 Run `pnpm demo` to see the brief's four triggers; everything else in the repo is optional extras (below).
 
@@ -95,7 +95,7 @@ docker run --rm -p 3000:3000 \
 
 The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and refuses to start unless `AUTH_SECRET` and `INTERNAL_API_KEY` are set to private values of 16+ characters (the public `dev-internal-key` is rejected).
 
-In production the image serves ingest (`POST /v1/events`), health, readiness and metrics. The inbox and stream routes need a session token that, in this project, only the dev login issues (a real deployment would plug in its identity provider), so use `docker compose up --build` for the interactive demo. Compose also sets `GROUP_WINDOW_MS=5000`, a 5 s grouping window, so a burst collapses quickly enough to watch.
+In production the image serves ingest (`POST /v1/events`), health, readiness, metrics, the static web UI and `GET /v1/players`. The UI's player picker cannot log in there (the UI says so), because the inbox and stream routes need a session token that, in this project, only the dev login issues (a real deployment would plug in its identity provider). Use `docker compose up --build` for the interactive demo. Outside production the server listens on `127.0.0.1` only (set `HOST` to change that); the image sets `HOST=0.0.0.0` so the container is reachable. Compose also sets `GROUP_WINDOW_MS=5000`, a 5 s grouping window, so a burst collapses quickly enough to watch.
 
 **Everything CI runs:**
 
@@ -123,8 +123,8 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 
 **Extras, built after the core passed its tests:**
 
-- **Per-event-type overrides**, plus mute-for-N-minutes and quiet hours in the player's IANA time zone. HIGH-priority PvP attacks bypass quiet hours.
-- **Offline inbox + replay.** Every notification is stored with a per-player `seq`. On reconnect the client sends its last seen id (`Last-Event-ID` header, or `?lastEventId=` from the browser) and the server replays exactly what was missed. After a restart or eviction the server sends an explicit `resync`.
+- **Per-event-type overrides**, plus mute-for-N-minutes (`muteForMinutes`; the stored `mutedUntil` is epoch milliseconds) and quiet hours in the player's IANA time zone. HIGH-priority PvP attacks bypass quiet hours. An explicit mute silences everything, including HIGH-priority PvP attacks (they are still stored and streamed as silent), because the mute is the player's own action; quiet hours are a schedule, so HIGH-priority events still break through.
+- **Offline inbox + replay.** Every notification is stored with a per-player `seq`. On reconnect the client sends its last seen id (`Last-Event-ID` header, or `?lastEventId=` from the browser) and the server replays exactly what was missed. The server marks the end of the replay with a `replayed` event, so a client can tell history from live frames. After a restart or eviction it sends an explicit `resync`.
 - **Idempotency.** An event redelivered by an at-least-once producer notifies at most once.
 - **Rate limiting.** A token bucket per player and category. Notifications over the limit are **stored silently, never dropped**. The limiter runs after grouping, so followers held back for a digest do not use up the budget.
 - **Burst grouping.** The first follower or attack is delivered instantly. The rest of the burst collapses into *"Player 'Kael' and 3 others started following you."*
@@ -197,7 +197,7 @@ test/golden/       expected demo output (acceptance test)
 |---|---|---|
 | `POST` | `/v1/dev/login` | `{ playerId }` → session cookie + bearer token (dev only) |
 | `POST` | `/v1/stream/ticket` | Bearer → `{ ticket, expiresInMs }`: a 30 s single-use ticket for the stream URL |
-| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `resync`. Auth: `?ticket=` (browsers) or `Authorization: Bearer`. Honours `Last-Event-ID` and `?lastEventId=` |
+| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `replayed`, `resync`. Auth: `?ticket=` (browsers), `Authorization: Bearer` or the `gid` cookie. Honours `Last-Event-ID` and `?lastEventId=` |
 | `GET` | `/v1/notifications?before=&limit=` | Inbox page, newest first |
 | `POST` | `/v1/notifications/:id/read` · `/v1/notifications/read-all` | Read receipts |
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |

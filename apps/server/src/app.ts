@@ -23,8 +23,11 @@ import { StreamTicketStore } from './auth/stream-tickets.ts';
 import type { ServerConfig } from './config.ts';
 import { problem } from './http/problem.ts';
 import {
+  hasLetterOrDigit,
   idParams,
   loginBody,
+  NAME_ID_HINT,
+  NAME_ID_PATTERN,
   pageQuery,
   platformEventBody,
   preferencesPatch,
@@ -59,6 +62,8 @@ export interface AppOptions {
   readonly streamTicketTtlMs?: number;
   /** Clock for ticket expiry (default `Date.now`). */
   readonly now?: () => number;
+  /** Cap on live stream tickets (default 10 000). Tests lower it to exercise the full-store path. */
+  readonly maxStreamTickets?: number;
 }
 
 /** Stream tickets ride in `?ticket=` (EventSource cannot set headers), and a stray `?token=` must not leak either; never log them. */
@@ -136,7 +141,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     config.core,
   );
   const auth = new DevAuthenticator(config.authSecret, options.now);
-  const tickets = new StreamTicketStore(options.streamTicketTtlMs, undefined, options.now);
+  const tickets = new StreamTicketStore(options.streamTicketTtlMs, options.maxStreamTickets, options.now);
   let ready = true;
   /** Set first thing on shutdown: from then on ingest is refused, so nothing is acknowledged after the core stops. */
   let closing = false;
@@ -159,6 +164,10 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
   server.setErrorHandler((error: FastifyError, _req, reply) => {
     if (error.validation) {
       const first = error.validation[0];
+      if (first?.keyword === 'pattern' && first.params.pattern === NAME_ID_PATTERN) {
+        const field = first.instancePath.split('/').pop() || 'name';
+        return problem(reply, 400, 'Invalid request', `${field} ${NAME_ID_HINT}`);
+      }
       const extra = first?.keyword === 'additionalProperties' ? first.params.additionalProperty : undefined;
       return problem(
         reply,
@@ -193,6 +202,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     }
     return requirePlayer(req, reply);
   };
+  /** onRequest hooks (not preHandler): they must answer before body validation can leak a 400. */
   const requireInternalKey = async (req: FastifyRequest, reply: FastifyReply) => {
     const given = req.headers['x-internal-key'];
     if (!config.internalApiKey || typeof given !== 'string' || !safeEqual(given, config.internalApiKey)) {
@@ -224,7 +234,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   server.post<{ Body: { playerId: number } }>(
     '/v1/dev/login',
-    { schema: { body: loginBody }, preHandler: devOnly },
+    { schema: { body: loginBody }, onRequest: devOnly },
     async (req, reply) => {
       const id = PlayerId(req.body.playerId);
       const profile = core.directory.get(id);
@@ -318,6 +328,8 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
           }
           if (r.entries.length > 0) metrics.inc('sse_replayed_total', {}, r.entries.length);
           conn.lastSeq = Math.max(conn.lastSeq, cursor.seq);
+          // Everything after this frame is live: clients show toasts for it, not for the replay before it.
+          conn.write(controlFrame('replayed', { count: r.entries.length }));
         }
       }
       conn.goLive();
@@ -389,6 +401,8 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     '/v1/events',
     {
       schema: { body: platformEventBody },
+      // Auth and shutdown answer before validation, so a caller without the key learns nothing about the schema.
+      onRequest: [refuseWhenClosing, requireInternalKey],
       // Runs before schema validation: the oneOf schema would otherwise list every branch's failures for a bad kind.
       preValidation: async (req, reply) => {
         const kind = (req.body as { kind?: unknown } | null | undefined)?.kind;
@@ -401,7 +415,6 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
           kind === undefined ? `missing event kind; ${expected}` : `unknown event kind ${JSON.stringify(kind)}; ${expected}`,
         );
       },
-      preHandler: [refuseWhenClosing, requireInternalKey],
     },
     async (req, reply) => {
       const body = req.body;
@@ -423,11 +436,14 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
   // ── Dev simulator (drives the web demo; mirrors the brief's calls) ─────────
   server.post<{ Body: { action: SimulateAction; args: (number | string)[]; repeat: number } }>(
     '/v1/dev/simulate',
-    { schema: { body: simulateBody }, preHandler: [refuseWhenClosing, devOnly] },
+    { schema: { body: simulateBody }, onRequest: [devOnly, refuseWhenClosing] },
     async (req, reply) => {
       const { action, args, repeat } = req.body;
       const [a, b] = args;
       const results: string[] = [];
+      if (NAMED_ARG_ACTIONS.has(action) && !hasLetterOrDigit(String(b))) {
+        return problem(reply, 400, 'Invalid request', `args[1] ${NAME_ID_HINT}`);
+      }
       const players = SIMULATE_PLAYER_ARGS[action] === 1 ? [a] : [a, b];
       const unknown = players.find((p) => !core.directory.get(Number(p) as PlayerId));
       if (unknown !== undefined) return problem(reply, 422, 'Unknown player', `Player ${unknown} is not in the player directory`);
@@ -484,6 +500,9 @@ const SIMULATE_PLAYER_ARGS: Record<SimulateAction, 1 | 2> = {
   friendRequestAccepted: 2,
   playerFollowed: 2,
 };
+
+/** Actions whose second arg is an item or challenge id (shown to players as a name). */
+const NAMED_ARG_ACTIONS: ReadonlySet<SimulateAction> = new Set(['itemAcquired', 'challengeCompleted']);
 
 function simulate(core: Core, action: SimulateAction, a: number, b: number | string): string {
   const n = (v: number | string) => {

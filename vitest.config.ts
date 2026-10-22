@@ -13,6 +13,7 @@ export default defineConfig({
       exclude: ['**/index.ts', '**/testing/**', 'apps/server/src/main.ts'],
       thresholds: {
         'packages/core/src/**': { lines: 90, branches: 85, functions: 90, statements: 90 },
+        'apps/server/src/**': { lines: 90 },
       },
     },
   },

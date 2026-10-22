@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Api, type Entry, type Player, type Preferences, TYPES, UnauthorizedError } from './api.ts';
+import { Api, type Entry, HttpError, type Player, type Preferences, TYPES, UnauthorizedError } from './api.ts';
 import { useNotificationStream } from './useNotificationStream.ts';
 
 const SESSION_KEY = 'gamenotify.session';
 const EXPIRED_NOTICE = 'Session expired — pick a player again';
+const NO_LOGIN_NOTICE =
+  'Player login is only available in development. Run `docker compose up --build` for the interactive demo.';
 
 interface Session {
   token: string;
@@ -32,7 +34,15 @@ export function App() {
   }, [anon]);
 
   const login = async (p: Player) => {
-    const r = await anon.login(p.id);
+    let r: Awaited<ReturnType<Api['login']>>;
+    try {
+      r = await anon.login(p.id);
+    } catch (e) {
+      // The production image serves this UI but not /v1/dev/login: say so instead of doing nothing.
+      setNotice(e instanceof HttpError && e.status === 404 && e.message === 'Not Found' ? NO_LOGIN_NOTICE : (e as Error).message);
+      return;
+    }
+    setNotice(null);
     const s = { token: r.token, playerId: p.id, displayName: r.displayName };
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
@@ -110,11 +120,10 @@ function Dashboard({
     setToasts((t) => [...t.slice(-3), { key, entry }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.key !== key)), 5_000);
   }, []);
-  const { entries, status, markLocal } = useNotificationStream(api, onLive, onExpired);
+  const { entries, status, unread, markLocal, markAllLocal } = useNotificationStream(api, onLive, onExpired);
   const guard = (e: unknown) => {
     if (e instanceof UnauthorizedError) onExpired();
   };
-  const unread = entries.filter((e) => !e.read).length;
 
   return (
     <div className="app">
@@ -140,7 +149,7 @@ function Dashboard({
           entries={entries}
           unread={unread}
           onRead={(e) => api.markRead(e.notification.id).then(() => markLocal([e.seq]), guard)}
-          onReadAll={() => api.markAllRead().then(() => markLocal(entries.map((e) => e.seq)), guard)}
+          onReadAll={() => api.markAllRead().then(() => markAllLocal(), guard)}
         />
         <PreferencesPanel api={api} onExpired={onExpired} />
       </section>

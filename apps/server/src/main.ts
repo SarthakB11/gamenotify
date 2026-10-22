@@ -1,5 +1,9 @@
+import { existsSync } from 'node:fs';
 import { buildApp } from './app.ts';
 import { loadConfig } from './config.ts';
+
+// Optional .env in the working directory; variables already in the environment win over the file.
+if (existsSync('.env')) process.loadEnvFile('.env');
 
 let config: ReturnType<typeof loadConfig>;
 try {

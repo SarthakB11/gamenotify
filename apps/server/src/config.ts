@@ -62,7 +62,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   }
 
   return Object.freeze({
-    host: env.HOST ?? '0.0.0.0',
+    // Loopback unless production: the dev login lets anyone who can reach the port impersonate any player.
+    host: env.HOST ?? (nodeEnv === 'production' ? '0.0.0.0' : '127.0.0.1'),
     port: int(env, 'PORT', 3000),
     env: nodeEnv,
     logLevel: env.LOG_LEVEL ?? (nodeEnv === 'test' ? 'silent' : 'info'),

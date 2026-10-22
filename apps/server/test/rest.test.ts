@@ -287,6 +287,110 @@ describe('POST /v1/dev/simulate', () => {
   });
 });
 
+describe('gates run before validation', () => {
+  const prod = {
+    NODE_ENV: 'production',
+    AUTH_SECRET: 'prod-test-secret-value',
+    INTERNAL_API_KEY: 'prod-test-internal-key',
+    LOG_LEVEL: 'silent',
+  };
+
+  it('POST /v1/events answers 401 before 400 when the internal key is missing or wrong', async () => {
+    const { base } = await setup();
+    const call = api(base);
+    for (const json of [{ kind: 'nope' }, {}, { kind: 'game.player_leveled_up', playerId: 1 }]) {
+      const r = await call('/v1/events', { method: 'POST', json });
+      expect(r.status).toBe(401);
+      expect(r.body).toMatchObject({ title: 'Unauthorized' });
+      expect((await call('/v1/events', { method: 'POST', json, headers: { 'x-internal-key': 'wrong' } })).status).toBe(401);
+    }
+  });
+
+  it('dev routes answer 404 in production even for an invalid body', async () => {
+    const { base } = await setup(prod);
+    const call = api(base);
+    expect((await call('/v1/dev/login', { method: 'POST', json: { playerId: 'x', extra: 1 } })).status).toBe(404);
+    expect((await call('/v1/dev/login', { method: 'POST', json: {} })).status).toBe(404);
+    expect((await call('/v1/dev/simulate', { method: 'POST', json: { action: 'hack' } })).status).toBe(404);
+    expect((await call('/v1/dev/simulate', { method: 'POST', json: { action: 'itemAcquired', args: [1, '__'] } })).status).toBe(
+      404,
+    );
+  });
+});
+
+describe('item ids need a letter or digit', () => {
+  it('POST /v1/events rejects blank item and challenge ids with a clear 400', async () => {
+    const { base } = await setup();
+    const key = { 'x-internal-key': 'dev-internal-key' };
+    for (const itemId of ['__', '   ', '-.-']) {
+      const r = await api(base)('/v1/events', {
+        method: 'POST',
+        headers: key,
+        json: { kind: 'game.item_acquired', playerId: 1, itemId },
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ title: 'Invalid request', detail: 'itemId must contain at least one letter or digit' });
+    }
+    const ok = await api(base)('/v1/events', {
+      method: 'POST',
+      headers: key,
+      json: { kind: 'game.item_acquired', playerId: 1, itemId: 'Sword_Of_Azeroth' },
+    });
+    expect(ok.status).toBe(202);
+  });
+
+  it('POST /v1/dev/simulate rejects blank item ids with a clear 400', async () => {
+    const { base } = await setup();
+    const call = api(base, await login(base, 1));
+    for (const id of ['__', '   ']) {
+      const r = await call('/v1/dev/simulate', { method: 'POST', json: { action: 'itemAcquired', args: [1, id] } });
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ title: 'Invalid request', detail: 'args[1] must contain at least one letter or digit' });
+    }
+  });
+});
+
+describe('POST /v1/dev/logout', () => {
+  it('clears the session cookie and answers 204, with or without a session', async () => {
+    const { base } = await setup();
+    for (const token of [undefined, await login(base, 1)]) {
+      const r = await api(base, token)('/v1/dev/logout', { method: 'POST' });
+      expect(r.status).toBe(204);
+      expect(r.headers.get('set-cookie')).toBe('gid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+    }
+  });
+
+  it('a cleared cookie no longer authenticates', async () => {
+    const { base } = await setup();
+    const r = await fetch(`${base}/v1/dev/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId: 1 }),
+    });
+    const gid = (r.headers.get('set-cookie') as string).split(';')[0] as string;
+    expect((await api(base)('/v1/me', { headers: { cookie: gid } })).status).toBe(200);
+    const out = await api(base)('/v1/dev/logout', { method: 'POST', headers: { cookie: gid } });
+    const cleared = (out.headers.get('set-cookie') as string).split(';')[0] as string;
+    expect(cleared).toBe('gid=');
+    expect((await api(base)('/v1/me', { headers: { cookie: cleared } })).status).toBe(401);
+  });
+});
+
+describe('POST /v1/stream/ticket when the store is full', () => {
+  it('answers 503 with Retry-After instead of issuing a ticket', async () => {
+    const s = await startApp({}, { maxStreamTickets: 1 });
+    stop = s.stop;
+    const one = api(s.base, await login(s.base, 1));
+    const two = api(s.base, await login(s.base, 2));
+    expect((await one('/v1/stream/ticket', { method: 'POST' })).status).toBe(200);
+    const full = await two('/v1/stream/ticket', { method: 'POST' });
+    expect(full.status).toBe(503);
+    expect(full.headers.get('retry-after')).toBe('1');
+    expect(full.body).toMatchObject({ title: 'Too many pending stream tickets' });
+    expect(full.body.ticket).toBeUndefined();
+  });
+});
+
 describe('graceful shutdown', () => {
   it('never acknowledges an event it will not deliver: ingest is refused once shutdown starts', async () => {
     const { base, app, stop: close } = await setup();
