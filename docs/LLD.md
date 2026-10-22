@@ -476,7 +476,7 @@ export class NotificationDispatcher {
         stored = true;
         this.#announce(entry, ctx.mode);                           // metrics, observers, delivery (NOT awaited)
       } catch (error) {                                            // one recipient's failure must not drop the others
-        if (!stored) for (const s of this.stages) s.rollback?.(ctx);          // release the dedup key so a retry is processed
+        if (!stored) for (const s of this.stages) s.rollback?.(ctx);          // release the dedup key so a re-send is processed
         if (!stored && openedGroup !== undefined) this.grouping.cancel(openedGroup); // no orphaned group window
         this.metrics.inc('dispatch_errors_total', { kind: event.kind });
         this.logger.error({ err: error, eventId: event.eventId, playerId: r.recipientId }, 'dispatch failed; will accept a retry');
@@ -582,15 +582,16 @@ The stages are **synchronous and allocation-free** on the happy path. `CONTINUE`
 
 - Key: `${sourceEventId}|${recipientId}|${type}`.
 - `IdempotencyStore.firstSeen(key)` returns `false` → `suppress(DUPLICATE)`.
-- **Mark-then-rollback.** The key is recorded up front, so every outcome that completes (stored, silent, grouped/held, disabled) dedupes retries. If a later step throws before the inbox holds the notification (render, append), the dispatcher calls `rollback` on the stages, which releases the key. The producer's retry is then processed rather than rejected as `DUPLICATE`. The key is per recipient, and the dispatcher isolates each recipient: one failure is logged (`dispatch_errors_total`) and the rest of a fan-out still run. Once `inbox.append` has returned the key stays recorded.
-- `TtlLruIdempotencyStore`: a `Map<string, expiresAt>` for lookup plus a `RingBuffer<{key, expiresAt}>` recording insertion order. Because the TTL is uniform, insertion order equals expiry order. On every insert:
+- **Mark-then-rollback.** The key is recorded up front, so every outcome that completes (stored, silent, grouped/held, disabled) dedupes retries. If a later step throws before the inbox holds the notification (render, append), the dispatcher calls `rollback` on the stages, which releases the key. A re-send of the same event id (a producer retrying on its own timeout, a replayed bus message, an in-process caller) is then processed rather than dropped as `DUPLICATE`. An HTTP producer is not told about the failure: `POST /v1/events` returns 202 at enqueue, before dispatch, so it has already been acknowledged and does not retry, and a dispatch failure after the 202 is only logged and counted. Guaranteeing that such an event is eventually processed needs a durable log or outbox in front of the dispatcher (HLD §12). The key is per recipient, and the dispatcher isolates each recipient: one failure is logged (`dispatch_errors_total`) and the rest of a fan-out still run. Once `inbox.append` has returned the key stays recorded.
+- `TtlLruIdempotencyStore`: a `Map<string, slot>` for lookup plus a `RingBuffer<{key, expiresAt}>` recording insertion order. Because the TTL is uniform, insertion order equals expiry order. On every insert:
   1. Pop the ring head while it has expired.
   2. Pop it while `size >= maxKeys`.
 
   Both steps are O(1), with no timers.
-  - A popped slot deletes its Map key only if the Map still holds that same `expiresAt`, so re-inserted keys survive.
+  - A popped slot deletes its Map key only if the Map still points at that very slot (identity, not just the same `expiresAt`), so a key that was released and re-inserted, even in the same millisecond, survives its stale slot. A released key's slot stays in the ring until it reaches the head and counts toward `maxKeys` until then, so a rollback can cost at most one early eviction of the oldest key.
   - *As built:* the first version iterated the Map from its head. V8 tombstones made that O(n), measured at 70% of CPU (ADR-010).
   - The defaults are a 10 min TTL and 100k keys, about 12 MB worst case.
+  - **Effective window under load.** The store holds at most `maxKeys` keys, so a key is remembered for `min(TTL, maxKeys / arrival rate)`, where the rate is keys per second (one per event and recipient). At 100k keys and 100k keys/s that is about 1 s, not 10 min; a duplicate that arrives later than that is processed again. To get the full TTL, size `maxKeys >= peak keys/s x TTL seconds` (600k per 1k keys/s at 10 min), at roughly 120 bytes per key.
 
 #### 5.4.2 `PreferenceStage` (Specification)
 
@@ -605,6 +606,8 @@ The evaluation order is **most specific first**:
 4. quietHours active(now, tz) AND priority < HIGH → ctx.mode = SILENT
 5. continue
 ```
+
+Mute silences every priority, HIGH included, while quiet hours let HIGH through: an explicit mute is the player's own action, whereas quiet hours are a schedule, so an urgent event (a PvP attack) still breaks through it. A muted player therefore also gets the HIGH-priority PvP digest stored as SILENT.
 
 Quiet-hours computation:
 
@@ -690,7 +693,7 @@ offer(ctx: StageContext): 'pass' | 'held' {
   if (repeatOnly && g.last!.type === NEW_FOLLOWER) { this.absorbed += g.held; return; }  // a repeat follow adds nothing
   if (g.held === 1 && !repeatOnly) return this.onFlush(g.last!);      // one new actor: emitted as-is
   if (g.last!.type === NEW_FOLLOWER) {                                // followers: new followers only
-    const groupCount = g.actors.length > 0 && g.distinct.size === 1 ? g.heldOthers : g.held;
+    const groupCount = g.distinct.size > 0 ? g.distinct.size : g.heldOthers;   // distinct new followers; repeats are absorbed
     this.absorbed += g.held - groupCount;
     return this.onFlush({ ...g.last!, groupCount, actorIds: g.actors, distinctActors: max(1, g.distinct.size), leadingActorId: lead });
   }
@@ -715,7 +718,7 @@ PvP digest wording (`PVP_ATTACKED`), by what was held after the delivered first 
 The mixed form lists the leading attacker first, then the new attackers (up to three, then `and N others`), and the bracket counts every held attack.
 
 - **Defaults:** `W = 10 s`, `Wmax = 60 s`. The demo uses `W = 1.5 s` so the effect is visible.
-- **Conservation property** (fast-check): for any burst of `n` offers, `passed + Σ groupCount(flushed) = n` for `PVP_ATTACKED`, so no attack is lost from a digest. For `NEW_FOLLOWER` the only events outside it are repeat follows by the leading follower (a follower already named), counted in `absorbedRepeats`: `passed + Σ groupCount(flushed) + absorbedRepeats = n`.
+- **Conservation property** (fast-check): for any burst of `n` offers, `passed + Σ groupCount(flushed) = n` for `PVP_ATTACKED`, so no attack is lost from a digest. For `NEW_FOLLOWER`, `groupCount` is the number of distinct new followers in the digest (equal to `distinctActors`). A repeat follow, by the leading follower or by anyone else, adds no information, so it is not in `groupCount` and is counted in `absorbedRepeats` instead: `passed + Σ groupCount(flushed) + absorbedRepeats = n`, exactly. Example: Bram delivered, then Bram, Kael, Kael, Mira held gives `groupCount` 2, `distinctActors` 2, `Player 'Kael' and 1 other started following you.` and 2 absorbed repeats.
 - **Shutdown:** `flushAll()` emits every open group synchronously before the process exits.
 
 ### 5.6 Renderer and message catalog — `application/render/`

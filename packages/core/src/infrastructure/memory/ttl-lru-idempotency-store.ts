@@ -15,11 +15,15 @@ interface Slot {
  * Bounded dedup window: Map for O(1) lookup + a FIFO ring of insertions for O(1) eviction.
  * Because the TTL is uniform, insertion order == expiry order, so the ring head is always the next to expire.
  *
+ * Effective window: a key is remembered for min(ttlMs, maxKeys / arrival rate), because the ring evicts the oldest
+ * key once maxKeys are held. At 100k events/s with the default 100k keys that is about 1 s, not the 10 min TTL.
+ * Size it as maxKeys >= peak events per second x ttl seconds (per recipient key for fan-out events) to get the full TTL.
+ *
  * (Deliberately not "iterate the Map from its head": V8 Maps keep tombstones for deleted entries,
  *  so head-iteration after many deletions degrades to O(n) per call — measured at ~70% of CPU.)
  */
 export class TtlLruIdempotencyStore implements IdempotencyStore {
-  readonly #keys = new Map<string, number>();
+  readonly #keys = new Map<string, Slot>();
   readonly #order: RingBuffer<Slot>;
   readonly #ttl: number;
   readonly #max: number;
@@ -38,18 +42,22 @@ export class TtlLruIdempotencyStore implements IdempotencyStore {
 
   firstSeen(key: string): boolean {
     const now = this.#clock.now();
-    const expiresAt = this.#keys.get(key);
-    if (expiresAt !== undefined && expiresAt > now) return false;
+    const current = this.#keys.get(key);
+    if (current !== undefined && current.expiresAt > now) return false;
 
     this.#evictExpired(now);
     if (this.#order.size >= this.#max) this.#evictOne();
     const slot: Slot = { key, expiresAt: now + this.#ttl };
-    this.#keys.set(key, slot.expiresAt);
+    this.#keys.set(key, slot);
     this.#order.push(slot);
     return true;
   }
 
-  /** The ring slot is left in place: eviction only deletes a key whose expiry still matches, so it is harmless. */
+  /**
+   * The ring slot is left in place (it cannot be removed from the middle) and keeps counting toward maxKeys until
+   * it reaches the head. Eviction deletes a key only when the Map still points at that very slot, so a stale slot
+   * never evicts a re-inserted live key; the cost is at most one early eviction per released key.
+   */
   release(key: string): void {
     this.#keys.delete(key);
   }
@@ -64,7 +72,7 @@ export class TtlLruIdempotencyStore implements IdempotencyStore {
 
   #evictOne(): void {
     const slot = this.#order.shift();
-    // Only delete if the Map still points at this slot (the key may have been re-inserted after expiry).
-    if (slot !== undefined && this.#keys.get(slot.key) === slot.expiresAt) this.#keys.delete(slot.key);
+    // Only delete if the Map still points at this slot (the key may have been released or re-inserted since).
+    if (slot !== undefined && this.#keys.get(slot.key) === slot) this.#keys.delete(slot.key);
   }
 }

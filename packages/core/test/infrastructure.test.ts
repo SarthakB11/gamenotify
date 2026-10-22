@@ -35,6 +35,15 @@ describe('UUIDv7', () => {
   });
 });
 
+describe('InMemoryPlayerDirectory', () => {
+  it('lists every player in registration order and looks one up by id', () => {
+    const dir = new InMemoryPlayerDirectory(SEED.players);
+    expect(dir.list().map((p) => p.id)).toEqual(SEED.players.map((p) => p.id));
+    expect(dir.get(SEED.players[0]!.id)).toBe(SEED.players[0]);
+    expect(dir.get(PlayerId(9_999))).toBeUndefined();
+  });
+});
+
 describe('system adapters', () => {
   it('scheduler fires and cancels', async () => {
     let fired = 0;

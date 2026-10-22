@@ -188,6 +188,28 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
     expect(sender.messages()).toEqual(["Player 'Bram' started following you.", "Congratulations! You've reached level 20!"]);
   });
 
+  it('a delivery that crashes inside the router is logged and does not break later events', async () => {
+    const { core, metrics, logger, sender } = makeCore();
+    const inc = metrics.inc.bind(metrics);
+    let armed = true;
+    metrics.inc = (name, labels, by) => {
+      if (armed && name === 'notifications_delivered_total') {
+        armed = false;
+        throw new Error('metrics down');
+      }
+      inc(name, labels, by);
+    };
+    sender.send = (() => Promise.resolve('DELIVERED')) as unknown as typeof sender.send; // async channel: failure surfaces as a rejection
+    core.gameEngine.playerLeveledUp(1, 20);
+    await core.settle();
+    expect(logger.lines.filter((l) => l.level === 'error')).toMatchObject([
+      { fields: { err: { message: 'metrics down' } }, msg: 'delivery crashed' },
+    ]);
+    core.gameEngine.playerLeveledUp(1, 21);
+    await core.settle();
+    expect(core.inboxService.page(PlayerId(1), null, 10).entries).toHaveLength(2);
+  });
+
   describe('digest never repeats the actor of the leading notification', () => {
     const burst = async (type: 'follow' | 'attack', actors: number[]) => {
       const { core, sender, scheduler } = makeCore({ grouping: { windowMs: 1_000, maxWindowMs: 5_000 } });
@@ -209,6 +231,13 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
       expect(await burst('follow', [2, 3, 2])).toEqual([
         "Player 'Bram' started following you.",
         "Player 'Kael' started following you.",
+      ]);
+    });
+
+    it('Bram, Bram, Kael, Kael, Mira: the digest names the 2 distinct new followers', async () => {
+      expect(await burst('follow', [2, 2, 3, 3, 4])).toEqual([
+        "Player 'Bram' started following you.",
+        "Player 'Kael' and 1 other started following you.",
       ]);
     });
 

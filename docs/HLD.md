@@ -86,7 +86,7 @@ The brief leaves these product points open. Each was raised as a clarifying ques
 | A2 | **Item rarity** | Only items at or above `RARE` notify (*"rare or valuable"*). The tiers are `COMMON < UNCOMMON < RARE < EPIC < LEGENDARY`, and the threshold is configurable. An item missing from the catalog notifies anyway, using a humanised name (`SwordOfAzeroth` → "Sword of Azeroth"), and increments a metric. This fails open for player experience. |
 | A3 | Friend Accepted recipient | `friendRequestAccepted(1, 3)` notifies **player 3** (the requester): *"Player 'Aria' accepted your friend request."* Player 1 performed the action and gets nothing. |
 | A4 | **PvP** | `playerAttacked(attackerId, victimId)` notifies the victim. `playerDefeated(winnerId, loserId)` notifies **both** sides with different messages. PvP falls under the **Game** category and can be muted per type. |
-| A5 | Disabled vs. muted | **Disabled** (category or type off) means the notification is never created or stored. **Muted or quiet hours** means it is stored in the inbox but not pushed live. The player sees it the next time they open the inbox. |
+| A5 | Disabled vs. muted | **Disabled** (category or type off) means the notification is never created or stored. **Muted or quiet hours** means it is stored in the inbox but not pushed live. The player sees it the next time they open the inbox. Mute silences HIGH-priority events too; quiet hours let them through. |
 | A6 | **Grouping** | Applies only to `NEW_FOLLOWER` and `PVP_ATTACKED`. The first event in a window is delivered **immediately** (leading edge). Later events within 10 s are collapsed into one follow-up: *"Kael and 3 others started following you."* Friend requests are never grouped because each one needs action. |
 | A7 | Rate limit | 20 live notifications per player per category per minute, using a token bucket. Notifications over the limit are **downgraded to silent**: stored in the inbox, not dropped. The limiter runs after grouping, so events held for a digest spend no tokens; only what is emitted (the leading-edge notification and the digest) does. |
 | A8 | Inbox retention | Each player keeps their last **200** notifications or **7 days**, whichever limit is hit first. A reconnect older than that window triggers a `resync`. |
@@ -294,7 +294,7 @@ erDiagram
 | Property | Guarantee | Mechanism |
 |---|---|---|
 | Ingestion | Non-blocking; explicit rejection when full | Bounded ring-buffer bus. `publish()` returns `accepted` or `rejected` |
-| Duplicates | At most one notification per `(eventId, recipient, type)` | TTL-bounded LRU idempotency store (10 min, 100k keys). The key is released if dispatch fails before the inbox write, so a producer retry is not lost |
+| Duplicates | At most one notification per `(eventId, recipient, type)` | TTL-bounded LRU idempotency store (10 min, 100k keys). The key is released if dispatch fails before the inbox write, so a re-send of the same event id is processed (an HTTP producer is acked at enqueue and is not told; a durable outbox is the production answer). The window is min(TTL, 100k keys / rate): about 1 s at 100k keys/s, so size `maxKeys >= peak rate x TTL` |
 | Storage | At-least-once into the inbox | Append happens before any delivery attempt |
 | Live delivery | Best effort, recoverable | Missed live pushes are replayed from the inbox using `Last-Event-ID` |
 | Ordering | Per-recipient FIFO | Single-threaded event loop plus monotonic per-player `seq`. The client dedups by `seq` |

@@ -61,7 +61,7 @@ export class GroupingStage {
     this.#onFlush = handler;
   }
 
-  /** Follower events that repeat the leading follower and are therefore not counted in a digest (attacks never are). */
+  /** Held follower events not represented in a digest's groupCount (repeat follows; attacks are never absorbed). */
   get absorbedRepeats(): number {
     return this.#absorbed;
   }
@@ -146,8 +146,9 @@ export class GroupingStage {
       return;
     }
     if (g.last.type === NotificationType.NEW_FOLLOWER) {
-      const others = g.actors.length > 0;
-      const groupCount = others && g.distinct.size === 1 ? g.heldOthers : g.held;
+      // A follower digest counts distinct new followers. Repeat follows (by the lead or anyone else) add no
+      // information, so they are absorbed. Actorless events cannot be told apart, so each one counts.
+      const groupCount = g.distinct.size > 0 ? g.distinct.size : g.heldOthers;
       this.#absorbed += g.held - groupCount;
       this.#onFlush({
         ...g.last,

@@ -32,6 +32,16 @@ describe('TtlLruIdempotencyStore', () => {
     expect(s.firstSeen('a')).toBe(true); // evicted, so seen as new
   });
 
+  it('a released key re-sent in the same millisecond is not evicted by its own stale ring slot', () => {
+    const s = new TtlLruIdempotencyStore({ ttlMs: 1e9, maxKeys: 2 }, new FakeClock(0));
+    s.firstSeen('a');
+    s.release('a');
+    expect(s.firstSeen('a')).toBe(true);
+    s.firstSeen('b'); // fills the ring: only the stale slot of 'a' may go, not the live 'a'
+    expect(s.size).toBe(2);
+    expect(s.firstSeen('a')).toBe(false);
+  });
+
   it('property: replaying any sequence never yields a second "first"', () => {
     fc.assert(
       fc.property(fc.array(fc.string({ maxLength: 3 }), { maxLength: 200 }), (keys) => {
@@ -130,6 +140,13 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     return { g, clock, scheduler, flushed };
   };
 
+  it('rejects invalid windows', () => {
+    const clock = new FakeClock(0);
+    const scheduler = new ManualScheduler(clock);
+    expect(() => new GroupingStage({ windowMs: 0, maxWindowMs: 5 }, clock, scheduler)).toThrow(RangeError);
+    expect(() => new GroupingStage({ windowMs: 10, maxWindowMs: 5 }, clock, scheduler)).toThrow(RangeError);
+  });
+
   it('passes non-groupable intents straight through', () => {
     const { g } = make();
     expect(g.offer(ctxFor('LEVEL_UP', 0))).toBe('pass');
@@ -144,7 +161,8 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     }
     scheduler.advance(2_000);
     expect(flushed).toHaveLength(1);
-    expect(flushed[0]?.intent).toMatchObject({ groupCount: 4, actorIds: [3, 4, 5], distinctActors: 3 });
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 3, actorIds: [3, 4, 5], distinctActors: 3 });
+    expect(g.absorbedRepeats).toBe(1);
     expect(g.openGroups).toBe(0);
   });
 
@@ -161,6 +179,15 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     for (const actor of [2, 3, 2]) g.offer(ctxFor('NEW_FOLLOWER', clock.now(), actor, 'k'));
     scheduler.advance(2_000);
     expect(flushed[0]?.intent).toMatchObject({ actorIds: [3], distinctActors: 1, groupCount: 1, leadingActorId: 2 });
+  });
+
+  it('follower burst Bram, Bram, Kael, Kael, Mira: groupCount is the 2 distinct new followers', () => {
+    const { g, clock, scheduler, flushed } = make();
+    for (const actor of [2, 2, 3, 3, 4]) g.offer(ctxFor('NEW_FOLLOWER', clock.now(), actor, 'k'));
+    scheduler.advance(2_000);
+    expect(flushed).toHaveLength(1);
+    expect(flushed[0]?.intent).toMatchObject({ groupCount: 2, actorIds: [3, 4], distinctActors: 2, leadingActorId: 2 });
+    expect(g.absorbedRepeats).toBe(2);
   });
 
   it('drops a follower digest made only of repeats of the leading actor', () => {
@@ -270,7 +297,7 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
     );
   });
 
-  it('property: conservation — for followers, passed + Σ groupCount(flushed) + absorbed repeats of the leading follower = offered', () => {
+  it('property: conservation — for followers, passed + Σ groupCount(flushed) + absorbedRepeats = offered, exactly', () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -293,6 +320,7 @@ describe('GroupingStage (leading edge + trailing collapse)', () => {
           scheduler.advance(10_000);
           const grouped = flushed.reduce((n, f) => n + (f.intent.groupCount ?? 1), 0);
           expect(passed + grouped + g.absorbedRepeats).toBe(events.length);
+          for (const f of flushed) expect(f.intent.groupCount).toBe(f.intent.distinctActors);
         },
       ),
     );

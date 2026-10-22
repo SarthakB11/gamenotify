@@ -120,12 +120,18 @@ export class NotificationDispatcher {
         stored = true;
         this.#announce(entry, ctx.mode);
       } catch (error) {
-        // Mark-then-rollback: release the dedup key so the producer's retry is processed, and keep
-        // going so one recipient's failure (e.g. a PvP fan-out) does not drop the others.
+        // Mark-then-rollback: release the dedup key so a re-send of this event id (a producer retrying on its own
+        // timeout, a replayed bus message, an in-process caller) is processed instead of dropped as a duplicate.
+        // An HTTP producer is not told: POST /v1/events answers 202 at enqueue, before dispatch, so a failure here is
+        // only logged and counted. The production answer is a durable log or outbox in front of the dispatcher.
+        // Keep going so one recipient's failure (e.g. a PvP fan-out) does not drop the others.
         if (!stored) for (const stage of d.stages) stage.rollback?.(ctx);
         if (!stored && openedGroup !== undefined) d.grouping.cancel(openedGroup);
         d.metrics.inc('dispatch_errors_total', { kind: event.kind });
-        d.logger.error({ err: error, eventId: event.eventId, playerId: r.recipientId }, 'dispatch failed; will accept a retry');
+        d.logger.error(
+          { err: error, eventId: event.eventId, playerId: r.recipientId },
+          'dispatch failed; a re-send of this event id will be processed',
+        );
       }
     }
     d.metrics.observe('dispatch_latency_seconds', (performance.now() - t0) / 1000);
