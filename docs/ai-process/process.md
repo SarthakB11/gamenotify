@@ -13,7 +13,7 @@ flowchart LR
   E --> F[LLD + ADRs]
   F --> G[Core: tests + code]
   G --> H[Server · demo · web]
-  H --> I[Verify: types · 183 tests ·<br/>arch rules · golden · bench · load · browser · docker]
+  H --> I[Verify: types · 194 tests ·<br/>arch rules · golden · bench · load · browser · docker]
   I -->|defects found| G
 ```
 
@@ -67,6 +67,7 @@ Taken from the session transcripts; each item is something the AI proposed or wa
 - **Assumptions as questions.** After the HLD and LLD, the AI had written its product rules into an "Assumptions" section and asked for a "go" to start building. The developer didn't approve them in bulk. They told the AI to ask the open rules as explicit questions first: item rarity, who hears about a PvP defeat, what muted means, and how bursts are grouped. Only the answers went into the code.
 - **Guard-rails on later sessions.** When handing the project to a new session, the developer told it not to change application behaviour, user-facing messages, tests or the golden file unless a check fails.
 - **Orchestrator and workers.** In the review sessions, the developer required every implementation and fix to be done by a separate, cheaper worker model (Sonnet), with the orchestrating model kept for review and judgement. Each fix had to come with a test that failed first.
+- **Retry and the dead-letter queue.** After the eighth review, the AI recommended keeping the never-triggered retry and DLQ path and defending it in the interview as a seam for future channels. The developer asked for it to be fixed in code instead. Of the two fixes (make the SSE sender able to fail, or remove the path), removal was chosen, because the inbox and replay already cover an offline player. Failures are now logged and counted, and the entry stays in the inbox for replay.
 
 ## 3. Research (before design, not after)
 

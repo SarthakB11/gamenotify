@@ -238,7 +238,7 @@ The connection is registered **before** reading the inbox, and live entries that
 | `NotificationRenderer` | **Template Method** + message catalog | Turns an intent into an immutable `Notification` (title, message, data) | i18n: a locale-keyed catalog |
 | `NotificationFactory` | **Factory** | The only place a `Notification` is constructed. Assigns ID (UUIDv7), timestamps, category and priority | — |
 | `Inbox` | Repository | Per-player append-only log with monotonic `seq`. Replay, read state, retention | Postgres adapter |
-| `DeliveryRouter` | **Strategy** (channels) + **Composite** | Routes an entry to every enabled channel. Retries with backoff. Dead-letters failures | Add push/email = add a `DeliveryChannel` |
+| `DeliveryRouter` | **Strategy** (channels) + **Composite** | Routes an entry to every enabled channel. A failing channel is logged and counted, and the entry stays in the inbox for replay. No retry | Add push/email = add a `DeliveryChannel` |
 | `ConnectionRegistry` | Registry | Player → live connections (multi-device). Presence | Redis presence for multi-node |
 | SSE Gateway | Adapter | HTTP stream, heartbeat, back-pressure, Last-Event-ID replay | WebSocket adapter behind the same `ConnectionRegistry` |
 | Composition root | Pure DI | Wires the object graph explicitly. No container, no decorators, no reflection | — |
@@ -298,7 +298,7 @@ erDiagram
 | Storage | At-least-once into the inbox | Append happens before any delivery attempt |
 | Live delivery | Best effort, recoverable | Missed live pushes are replayed from the inbox using `Last-Event-ID` |
 | Ordering | Per-recipient FIFO | Single-threaded event loop plus monotonic per-player `seq`. The client dedups by `seq` |
-| Failure isolation | One bad handler or channel cannot stall others | Per-handler try/catch, retry with exponential backoff and full jitter (3×), then a dead-letter queue with metrics |
+| Failure isolation | One bad handler or channel cannot stall others | Per-handler try/catch. A failing channel is logged and counted (`notifications_delivered_total{result="FAILED"}`), and the entry stays in the inbox for replay. Retry and a dead-letter queue are deferred until a channel that can fail exists |
 | Slow consumers | Never block the dispatcher | Per-connection outbound buffer cap (1,000 frames). Past the cap, the connection is closed and the client replays on reconnect. Notifications are **disconnected and replayed, never silently dropped** |
 | Shutdown | Graceful | Stop intake → drain bus → flush grouping windows → close streams with a `retry:` hint → exit |
 
@@ -318,13 +318,13 @@ Node runs JavaScript on one thread. The work is to **keep the event loop free**,
 8. **No sync I/O, no `JSON.parse` on the hot path**, and lazy logging (`pino` level guards).
 9. **Measured, not assumed.** `mitata` benchmarks with budgets fail CI on regression. The SSE load script reports p50/p99 and RSS.
 
-**Measured results.** The first three rows are from `pnpm bench` on 2026-10-21 (Linux x64 (WSL2), i7-12650H, Node 24.22.1). The two SSE rows are from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
+**Measured results.** The first three rows are from `pnpm bench` on 2026-10-22 (Linux x64 (WSL2), i7-12650H, Node 24.22.1). The two SSE rows are from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
 
 | Metric | Result |
 |---|---|
-| Full path, per event | 4.9 µs avg, p99 ≈ 25 µs |
-| Suppressed path (render skipped) | 1.2 µs |
-| End to end through the bus | ≈ 183k events/s |
+| Full path, per event | 4.1 µs avg, p99 ≈ 17 µs |
+| Suppressed path (render skipped) | 1.0 µs |
+| End to end through the bus | ≈ 200k events/s (155k to 207k over three quiet runs) |
 | 2k SSE connections @ 1k events/s | p50 7 ms, p99 20 ms, 195 MB RSS |
 | 10k SSE connections @ 2k events/s | p50 9 ms, p99 27 ms, 382 MB RSS |
 
@@ -349,7 +349,7 @@ At the time of the profiling work, the first build ran at 76 µs per event and t
 | Signal | Detail |
 |---|---|
 | Logs | `pino` JSON with `eventId`, `notificationId`, `playerId`, `stage`, `verdict`, `latencyUs`. Correlates event → notification → delivery |
-| Metrics | `events_received_total{kind}`, `notifications_suppressed_total{reason}`, `notifications_delivered_total{channel,result}`, `dispatch_latency_seconds` (histogram), `bus_queue_depth`, `sse_connections`, `dlq_size` |
+| Metrics | `events_received_total{kind}`, `notifications_suppressed_total{reason}`, `notifications_delivered_total{channel,result}`, `dispatch_latency_seconds` (histogram), `bus_queue_depth`, `sse_connections` |
 | Health | `/healthz` (liveness), `/readyz` (bus accepting, not draining) |
 | Tracing (future) | OpenTelemetry spans per stage. Context propagated from `eventId` |
 

@@ -105,6 +105,8 @@ unless a check fails and a minimal fix is required. If that happens, explain eac
 Do NOT add secrets or tokens to the repo, and do not rewrite the design docs beyond the ai-process note.
 ````
 
+The commit in step 5 was made as `docs(ai-process): record repository push session`.
+
 **What the AI did:**
 
 - **Unpacked** the attached zip (137 files) into the empty repo. The archive was removed from the working tree in step 1, so it never entered a commit. No PDF or secrets were in the archive.
@@ -333,3 +335,25 @@ Prompts, verbatim:
 **Verification:**
 
 - `pnpm verify`: green, 183 tests. Coverage re-measured: core 99.6%, server 97.3%, combined 98.8% (1,214 of 1,229 lines).
+
+## 15. Session 11: Claude Code (review findings)
+
+Prompts, verbatim:
+
+> rank the project again after this is done
+
+> yes and fix 5
+
+**Workflow and findings:**
+
+- The eighth cold review scored 8.2/10 (ship). The parallel clean-clone run passed every check apart from two doc mismatches and one noisy validation error. The developer approved four of the proposed fixes and added a fifth: removing the retry and dead-letter path, which the orchestrator had suggested leaving as an interview topic.
+- Muted, quiet-hours and rate-limited entries were stored but never streamed, so an open web client missed them until a reload. SILENT entries are now delivered to senders that declare `carriesSilent` (the SSE sender) as frames flagged `silent: true`; the console demo sender still never prints them, and the golden output is unchanged. A server test opens a stream, mutes, unmutes and reconnects, and sees every entry exactly once.
+- An attack burst Bram, Bram, Kael produced a digest naming only Kael. Attack digests now count every held attack ("You're under attack by Player 'Bram' and Player 'Kael'! (2 more attacks)"), and the conservation property is strict for attacks again. LLD §5.5 was rewritten to match.
+- Retry, backoff and the dead-letter queue were removed: the only shipped sender cannot fail, and SSE sequence ordering would drop a retried frame anyway. A failing channel is now logged and counted, and the entry stays in the inbox for replay. ADR-009 carries a dated note.
+- `POST /v1/events` validates with an Ajv discriminator on `kind`, so a missing or extra field names only that field. In production the 401 detail no longer points at the dev-only login, and the README states what the production image serves. `pnpm start` and `pnpm dev` now load `.env` when present.
+- Two server tests that waited a fixed time for something to arrive now poll with a deadline; one had failed once under load.
+
+**Verification:**
+
+- `pnpm verify`: green, 194 tests. Coverage re-measured: core 99.2%, server 97.3%, combined 98.5% (1,202 of 1,220 lines).
+- `pnpm bench`: budgets met (~200k events/s, worst p99 ≈ 17 µs).

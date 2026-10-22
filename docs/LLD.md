@@ -32,7 +32,7 @@ gamenotify/
 │        │  ├─ resolvers/           # one IntentResolver per event kind (Strategy)
 │        │  ├─ pipeline/            # stages: idempotency, preference, grouping, rate-limit
 │        │  ├─ render/              # NotificationRenderer + message catalog
-│        │  ├─ delivery/            # DeliveryRouter, retry, DLQ
+│        │  ├─ delivery/            # DeliveryRouter (channel seam), in-app channel
 │        │  ├─ dispatcher.ts        # NotificationDispatcher (orchestrator)
 │        │  └─ services/            # PreferenceService, InboxService (use cases for REST)
 │        ├─ infrastructure/memory/  # in-memory adapters (dependency-free)
@@ -508,7 +508,6 @@ export class NotificationDispatcher {
   #announce(entry: InboxEntry, mode: DeliveryMode): void {
     this.metrics.inc('notifications_created_total', { type: entry.notification.type, mode });
     for (const o of this.#observers) o.onCreated?.(entry);
-    if (mode !== DeliveryMode.LIVE) return;                        // SILENT: stored, never pushed
     const pending = this.delivery.deliver(entry);                  // first attempt runs synchronously
     if (pending === undefined) return;                             // delivered synchronously: no Promise allocated
     this.#inflight.track(pending.catch(logCrash));                 // NOT awaited
@@ -516,10 +515,12 @@ export class NotificationDispatcher {
 }
 ```
 
-**Why delivery is not awaited.** If the dispatcher awaited delivery, one sender retrying with backoff (up to about 2 s) would stall the bus for **every** player. Instead:
+**Silent entries.** `#announce` hands every stored entry to the delivery router, SILENT ones included. `InAppChannel.accepts` lets a SILENT entry through only when its sender declares `carriesSilent` (the SSE sender does; the console demo sender and the default test recorder do not). The SSE frame carries `silent: true`, so an open client adds the entry to its inbox and unread count without a toast, and an alert-only sender never prints a muted notification. Replay (`inbox.since`) returns SILENT entries like any other, so a reconnect sees the same sequence the open stream did.
+
+**Why delivery is not awaited.** If the dispatcher awaited delivery, one slow asynchronous channel would stall the bus for **every** player. Instead:
 
 - The first send attempt runs synchronously up to its first `await`. The SSE sender writes to the socket synchronously, so frames still leave in `seq` order.
-- Retries run in the background. A retried frame can arrive out of order, so the client orders by `seq` and dedups by notification `id` (LLD §6.6).
+- A channel that returns a Promise settles in the background. The shipped SSE sender is synchronous, so frames leave in `seq` order; the client still orders by `seq` and dedups by notification `id` (LLD §6.6).
 - `#inflight` is a `Set<Promise>`; `idle()` resolves once it is empty. Graceful shutdown awaits it after `bus.drain()` so no delivery attempt is abandoned.
 
 ### 5.3 Intent resolvers (Strategy + registry) — `application/resolvers/`
@@ -638,14 +639,16 @@ States per `groupKey`:
 ```mermaid
 stateDiagram-v2
   [*] --> Idle
-  Idle --> Open: offer(intent) / pass through immediately (leading edge), arm timer(W)
-  Open --> Open: offer(intent) / hold: count++, keep ≤3 actorIds, windowEnd=min(now+W, openedAt+Wmax)
-  Open --> Idle: timer fires & now ≥ windowEnd / flush (count==0 → nothing; count==1 → single; count>1 → aggregated)
+  Idle --> Open: offer(intent) / pass through immediately (leading edge), remember its actor as the leading actor, arm timer(W)
+  Open --> Open: offer(intent) / hold: held++, heldOthers++ unless the actor is the leading one, keep ≤3 new actors, windowEnd=min(now+W, openedAt+Wmax)
+  Open --> Idle: timer fires & now ≥ windowEnd / flush (held==0 → nothing; follower repeats only → nothing; one new actor → single; else aggregated)
   Open --> Open: timer fires & now < windowEnd / re-arm for (windowEnd − now)
 ```
 
 ```ts
-interface Group { openedAt: number; windowEnd: number; held: number; actors: PlayerId[];
+interface Group { openedAt: number; leadingActorId: PlayerId | undefined; windowEnd: number;
+                  held: number; heldOthers: number;               // heldOthers: held events whose actor is not the leading one
+                  actors: PlayerId[]; distinct: Set<PlayerId>;    // new actors only (the leading actor is never in them)
                   last: NotificationIntent | null }
 
 offer(ctx: StageContext): 'pass' | 'held' {
@@ -653,12 +656,19 @@ offer(ctx: StageContext): 'pass' | 'held' {
   if (!intent.groupKey) return 'pass';
   const g = this.#groups.get(intent.groupKey);
   if (!g) {                                                  // leading edge
-    this.#groups.set(intent.groupKey, { openedAt: ctx.now, windowEnd: ctx.now + this.W, held: 0, actors: [], last: null });
+    this.#groups.set(intent.groupKey, { openedAt: ctx.now, leadingActorId: intent.actorId, windowEnd: ctx.now + this.W,
+                                        held: 0, heldOthers: 0, actors: [], distinct: new Set(), last: null });
     this.#arm(intent.groupKey, this.W);
     return 'pass';
   }
   g.held++; g.last = intent;
-  if (g.actors.length < 3) g.actors.push(intent.params.actorId as PlayerId);
+  if (intent.actorId === undefined || intent.actorId !== g.leadingActorId) {
+    g.heldOthers++;
+    if (intent.actorId !== undefined && !g.distinct.has(intent.actorId)) {
+      g.distinct.add(intent.actorId);                        // bounded at 10,000
+      if (g.actors.length < 3) g.actors.push(intent.actorId);
+    }
+  }
   g.windowEnd = Math.min(ctx.now + this.W, g.openedAt + this.Wmax);   // sliding, capped
   return 'held';
 }
@@ -668,17 +678,44 @@ offer(ctx: StageContext): 'pass' | 'held' {
     const g = this.#groups.get(key); if (!g) return;
     const now = this.clock.now();
     if (now < g.windowEnd) return this.#arm(key, g.windowEnd - now);  // lazy re-arm, no clearTimeout churn
-    this.#groups.delete(key);
-    if (g.held === 0) return;
-    const out = g.held === 1 ? g.last!
-      : { ...g.last!, actorIds: g.actors, groupCount: g.held, sourceEventId: g.last!.sourceEventId };
-    this.#flush(out);   // → dispatcher.#emitDigest, which decides LIVE / SILENT from the preferences at emission
+    this.#flush(key);
   }, ms);
+}
+
+#flush(key: string) {
+  const g = this.#groups.get(key)!; this.#groups.delete(key);
+  if (g.held === 0) return;
+  const lead = g.leadingActorId;
+  const repeatOnly = lead !== undefined && g.heldOthers === 0;        // every held event repeats the leading actor
+  if (repeatOnly && g.last!.type === NEW_FOLLOWER) { this.absorbed += g.held; return; }  // a repeat follow adds nothing
+  if (g.held === 1 && !repeatOnly) return this.onFlush(g.last!);      // one new actor: emitted as-is
+  if (g.last!.type === NEW_FOLLOWER) {                                // followers: new followers only
+    const groupCount = g.actors.length > 0 && g.distinct.size === 1 ? g.heldOthers : g.held;
+    this.absorbed += g.held - groupCount;
+    return this.onFlush({ ...g.last!, groupCount, actorIds: g.actors, distinctActors: max(1, g.distinct.size), leadingActorId: lead });
+  }
+  // PVP_ATTACKED: every held attack is counted, the leading attacker is named only if they attacked again
+  const repeated = lead !== undefined && !repeatOnly && g.held > g.heldOthers;
+  this.onFlush({ ...g.last!, groupCount: g.held,
+                 actorIds: repeatOnly ? [lead] : repeated ? [lead, ...g.actors] : g.actors,
+                 distinctActors: repeatOnly ? 1 : max(1, g.distinct.size + (repeated ? 1 : 0)), leadingActorId: lead });
+                 // → dispatcher.#emitDigest, which decides LIVE / SILENT from the preferences at emission
 }
 ```
 
+PvP digest wording (`PVP_ATTACKED`), by what was held after the delivered first attack by Bram:
+
+| Held | `groupCount` | Message |
+|---|---|---|
+| Bram, Bram (only repeats of the leading attacker) | 2 | `Player 'Bram' attacked you 2 more times!` |
+| Kael, Kael (one new attacker) | 2 | `Player 'Kael' attacked you 2 times!` |
+| Kael, Mira (several new attackers) | 2 | `You're under attack by Player 'Kael' and 1 other!` |
+| Bram, Kael (repeat plus a new attacker) | 2 | `You're under attack by Player 'Bram' and Player 'Kael'! (2 more attacks)` |
+
+The mixed form lists the leading attacker first, then the new attackers (up to three, then `and N others`), and the bracket counts every held attack.
+
 - **Defaults:** `W = 10 s`, `Wmax = 60 s`. The demo uses `W = 1.5 s` so the effect is visible.
-- **Conservation property** (fast-check): for any sequence of `n` offers on one key, `passed + Σ groupCount(flushed) = n`.
+- **Conservation property** (fast-check): for any burst of `n` offers, `passed + Σ groupCount(flushed) = n` for `PVP_ATTACKED`, so no attack is lost from a digest. For `NEW_FOLLOWER` the only events outside it are repeat follows by the leading follower (a follower already named), counted in `absorbedRepeats`: `passed + Σ groupCount(flushed) + absorbedRepeats = n`.
 - **Shutdown:** `flushAll()` emits every open group synchronously before the process exits.
 
 ### 5.6 Renderer and message catalog — `application/render/`
@@ -711,7 +748,7 @@ export const EN_CATALOG = {
 | LEVEL_UP | `Congratulations! You've reached level 15!` |
 | ITEM_ACQUIRED | `You've acquired the legendary Sword of Azeroth!` |
 | CHALLENGE_COMPLETED | `Challenge complete! You've conquered 'Dragon's Lair'.` |
-| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, one attacker who also sent the delivered first attack: `Player 'Zed' attacked you 3 more times!`. Grouped, one attacker who is new: `Player 'Kael' attacked you 3 times!` Grouped, several attackers: `You're under attack by Player 'Zed' and 2 others!` |
+| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, one attacker who also sent the delivered first attack: `Player 'Zed' attacked you 3 more times!`. Grouped, one attacker who is new: `Player 'Kael' attacked you 3 times!` Grouped, several new attackers: `You're under attack by Player 'Zed' and 2 others!` Grouped, the first attacker again plus new ones: `You're under attack by Player 'Zed' and Player 'Kael'! (2 more attacks)` |
 | PVP_DEFEATED / VICTORY | `You were defeated by Player 'Zed'.` / `You defeated Player 'Mira'!` |
 | FRIEND_REQUEST | `Player 'Kael' has sent you a friend request.` |
 | FRIEND_ACCEPTED | `Player 'Aria' accepted your friend request.` |
@@ -741,29 +778,27 @@ interface PlayerLog { firstSeq: number; nextSeq: number; ring: (InboxEntry | und
 
 ```ts
 export class DeliveryRouter {
-  readonly #d: DeliveryRouterDeps;   // { channels, retry, dlq, prefs, clock, metrics, sleep }
+  readonly #d: DeliveryRouterDeps;   // { channels, prefs, inbox, clock, metrics, logger }
   constructor(deps: DeliveryRouterDeps) { this.#d = deps; }
-  async deliver(entry: InboxEntry): Promise<void> {
+  // undefined when every channel answered synchronously (the hot path allocates nothing); otherwise a Promise that never rejects
+  deliver(entry: InboxEntry): Promise<void> | undefined {
     const prefs = this.#d.prefs.get(entry.notification.recipientId);
-    await Promise.all(this.#d.channels.filter(c => c.accepts(entry, prefs)).map(c => this.#withRetry(c, entry)));
-  }
-  async #withRetry(c: DeliveryChannel, e: InboxEntry): Promise<void> {
-    for (let attempt = 1; ; attempt++) {
-      let r: DeliveryResult;
-      try { r = await c.send(e); } catch { r = 'FAILED'; }
-      this.metrics.inc('notifications_delivered_total', { channel: c.name, result: r });
-      if (r !== 'FAILED') return;                                // DELIVERED or RECIPIENT_OFFLINE (inbox has it)
-      if (attempt >= this.retry.maxAttempts) return this.dlq.put({ entry: e, channel: c.name, attempts: attempt, at: this.clock.now() });
-      await sleep(this.retry.delay(attempt));                    // full jitter: random(0, min(cap, base·2^attempt))
+    for (const c of this.#d.channels) {
+      if (!c.accepts(entry, prefs)) continue;
+      let r: DeliveryResult | Promise<DeliveryResult>;
+      try { r = c.send(entry); } catch (e) { this.#failed(c, entry, e); continue; }   // log + count, then carry on
+      // a Promise is settled the same way (then / catch); sync results go straight to #settle
+      this.#settle(c, entry, r as DeliveryResult);
     }
   }
+  // #settle: FAILED → #failed (warn log with recipient and seq, notifications_delivered_total{result="FAILED"});
+  //          DELIVERED → count + inbox.markDelivered; RECIPIENT_OFFLINE → count only (the inbox has it)
 }
 ```
 
 - `InAppChannel` adapts the `NotificationSender` port (the brief's "existing notification client"). It accepts every entry in v1.
 - `RECIPIENT_OFFLINE` is **not a failure**. The entry is already in the inbox and will be replayed.
-- Retries never block other recipients or the bus, because the dispatcher does not await delivery (§5.2). Retries only happen on exceptions, which are rare.
-- `RetryPolicy` defaults: `maxAttempts 3`, `base 50 ms`, `cap 2 s`. `InMemoryDeadLetterQueue` is a ring buffer of 1,000 entries.
+- **No retry, no dead-letter queue.** A throwing channel, a `FAILED` result or a rejected Promise is logged at `warn` with the recipient and `seq`, counted as `notifications_delivered_total{result="FAILED"}`, and does not affect other channels or the dispatcher. The entry is already in the inbox, so it is replayed on reconnect. The only shipped sender never throws, so retry and a DLQ would be dead code; add them with the first channel that can fail (email, push).
 
 ---
 
@@ -910,7 +945,6 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 | `POST /v1/events` | `x-internal-key` | `PlatformEvent` (`eventId` optional → generated) | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Ingestion for real producers. Every player id in the event must exist in the directory, checked before publishing, so unknown ids cannot create inbox logs. The key is compared in constant time |
 | `POST /v1/dev/simulate` | none (dev only) | `{ action: "playerLeveledUp", args: [1, 15], repeat? }` | `202` / `422` unknown player / `503` + `Retry-After: 1` when bus full | Calls `GameEngine`/`SocialSystem` with the brief's exact signatures; drives the web demo |
 | `GET /v1/players` | none | — | seeded players | For the demo's player picker |
-| `GET /v1/admin/dlq` | `x-internal-key` | — | `DeadLetter[]` | Most recent entries, newest first. Query `limit` 1 to 1000, default 100 (400 outside the range) |
 | `GET /healthz` · `/readyz` · `/metrics` | none | — | `200` / Prometheus text | `readyz` = 503 while draining |
 
 ### 6.5 Dev authentication — `apps/server/src/auth/`
@@ -932,7 +966,7 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 | Part | Detail |
 |---|---|
 | `useNotificationStream()` | Wraps `EventSource('/v1/stream', { withCredentials: true })`. Handles `hello`, `notification` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` |
-| Toasts | Only for `silent: false`, and only for live frames: frames replayed after a reconnect (a burst right after `open`) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
+| Toasts | Only for `silent: false` (a silent frame still joins the inbox list and the unread count), and only for live frames: frames replayed after a reconnect (a burst right after `open`) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
 | Inbox panel | Initial `GET /v1/notifications`. Infinite scroll by `before`. Mark read on click |
 | Preferences panel | Category switches, a per-type override tri-state (inherit / on / off), mute 1 h, quiet hours. Uses `PATCH` with `If-Match` |
 | Simulator panel | Buttons that mirror the brief (`Level Up 1→15`, `Item 2 SwordOfAzeroth`, `Friend 3→1`, `Accept 1←3`), plus *Follower burst ×5*, *PvP*, *Duplicate event* |
@@ -958,7 +992,7 @@ export interface CorePorts {
 }
 ```
 
-`buildCore` merges `overrides` into `DEFAULT_CORE_CONFIG`, builds the in-memory adapters, registers the eight resolvers (`resolvers.assertComplete(ALL_EVENT_KINDS)` fails fast at boot), assembles the pre-grouping stages (idempotency, preferences), the `GroupingStage`, the post-grouping rate-limit stage, the renderer and the `DeliveryRouter` (with `InAppChannel` over `ports.sender`), then starts the dispatcher on the bus. It returns `config`, `bus`, `dispatcher`, `grouping`, `inbox`, `dlq`, `directory`, `catalog`, `gameEngine`, `socialSystem`, `preferences`, `inboxService`, plus `settle()` (drain the bus and wait for deliveries) and `shutdown()` (drain, flush open groups, await deliveries).
+`buildCore` merges `overrides` into `DEFAULT_CORE_CONFIG`, builds the in-memory adapters, registers the eight resolvers (`resolvers.assertComplete(ALL_EVENT_KINDS)` fails fast at boot), assembles the pre-grouping stages (idempotency, preferences), the `GroupingStage`, the post-grouping rate-limit stage, the renderer and the `DeliveryRouter` (with `InAppChannel` over `ports.sender`), then starts the dispatcher on the bus. It returns `config`, `bus`, `dispatcher`, `grouping`, `inbox`, `directory`, `catalog`, `gameEngine`, `socialSystem`, `preferences`, `inboxService`, plus `settle()` (drain the bus and wait for deliveries) and `shutdown()` (drain, flush open groups, await deliveries).
 
 **Server `main.ts` lifecycle:**
 
@@ -991,7 +1025,6 @@ Loaded once from env vars, validated at boot (integers, enums, production-requir
 | `INBOX_CAPACITY` / `INBOX_TTL_MS` | `200` / `604800000` | Per player |
 | `MIN_ITEM_RARITY` | `RARE` | A2 |
 | `SSE_HEARTBEAT_MS` / `SSE_MAX_BUFFERED_FRAMES` / `SSE_MAX_CONN_PER_PLAYER` | `15000` / `1000` / `5` | Gateway |
-| `RETRY_MAX_ATTEMPTS` / `RETRY_BASE_MS` / `RETRY_CAP_MS` | `3` / `50` / `2000` | Delivery |
 
 ---
 
@@ -1003,7 +1036,7 @@ Loaded once from env vars, validated at boot (integers, enums, production-requir
 | Domain rule | Self-follow, below rarity | Suppressed with a reason. Metric. `debug` log |
 | Capacity | Bus full | `publish` → `rejected`. API → `503 Retry-After`. Metric + `warn` (rate-limited log) |
 | Handler fault | Bug in a resolver | Caught per handler. `error` log with `eventId`. Other handlers and events unaffected |
-| Delivery fault | Sender throws | Retry → DLQ. The entry stays in the inbox, so the player still sees it |
+| Delivery fault | Sender throws or returns `FAILED` | `warn` log and `FAILED` metric, no retry. The entry stays in the inbox, so the player still sees it on reconnect |
 | Slow consumer | Socket not draining | Connection evicted. Client replays via `Last-Event-ID` |
 | Startup misconfig | Missing resolver, bad env | Fail fast, exit code 1 |
 | Unknown / bug | Anything else | Fastify error handler → `500` (no stack in prod). `uncaughtException` → log + graceful exit |
@@ -1028,7 +1061,7 @@ Loaded once from env vars, validated at boot (integers, enums, production-requir
 | `groups_flushed_total`, `group_size` | counter / histogram | `type` |
 | `dispatch_latency_seconds` | histogram (buckets 50 µs … 50 ms) | — |
 | `sse_connections`, `sse_evictions_total`, `sse_replayed_total`, `sse_resync_total` | gauge / counters | `reason` |
-| `dlq_size`, `catalog_miss_total` | gauge / counter | — |
+| `catalog_miss_total` | counter | — |
 
 ---
 
@@ -1049,7 +1082,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | T-09 | Property | Grouping | Conservation (§5.5). Leading edge is immediate. Window caps at `Wmax`. `flushAll` on shutdown |
 | T-10 | Unit | Bus | FIFO order. Back-pressure `rejected` at capacity. Handler error isolation. `drain()` resolves. Yields every `batch` |
 | T-11 | Unit | Inbox | Contiguous seq. Ring eviction updates `firstSeq` and `unread`. `since` → entries / resync. TTL prune |
-| T-12 | Unit | DeliveryRouter | OFFLINE is not retried. FAILED retried with jittered delays, then DLQ. Does not block the dispatcher |
+| T-12 | Unit | DeliveryRouter | OFFLINE is not a failure. A throwing, rejecting or `FAILED` channel is logged and counted, leaves the entry in the inbox and does not affect other channels or the dispatcher. Sync path returns no Promise |
 | T-13 | Property | Ordering | For random interleavings across players, each player's received seqs are strictly increasing |
 | T-14 | Integration | SSE | Auth 401. `hello` on first connect. Live frame format. Replay from `Last-Event-ID`. `resync` on epoch mismatch or evicted cursor |
 | T-15 | Integration | SSE race | Events published *during* replay are delivered exactly once, in order (handoff §6.3) |
@@ -1073,9 +1106,9 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | Script | Command | Purpose |
 |---|---|---|
 | `pnpm build` | `tsc -b && pnpm -F web build` | Compile all packages (project references) and the web bundle |
-| `pnpm start` | `node apps/server/dist/main.js` | Server + web on `http://localhost:3000` |
+| `pnpm start` | `node --env-file-if-exists=.env apps/server/dist/main.js` | Server + web on `http://localhost:3000` |
 | `pnpm demo` | `node apps/demo/dist/main.js` | Console walkthrough of the brief's triggers and extras |
-| `pnpm dev` | `node --conditions=development --watch apps/server/src/main.ts` + `vite` | Native type stripping, no build step. `@gamenotify/core` exports a `development` condition that points at `src/*.ts` |
+| `pnpm dev` | `node --env-file-if-exists=.env --conditions=development --watch apps/server/src/main.ts` + `vite` | Native type stripping, no build step. `@gamenotify/core` exports a `development` condition that points at `src/*.ts` |
 | `pnpm test` | `vitest run` | Unit, property, integration |
 | `pnpm test:coverage` | `vitest run --coverage` | The same suite with the coverage gate (what CI runs) |
 | `pnpm test:arch` | `vitest run packages/core/test/architecture.test.ts` | Layer rules |
@@ -1203,7 +1236,7 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | Cookies | `@fastify/cookie` | 10-line parser | Read-only use |
 | Stream auth | Cookie | Bearer or cookie, plus a short-lived single-use `?ticket=` for the browser | Per-tab sessions: two tabs can be two players; the session token never appears in a URL |
 | Synthetic players | — | `SYNTHETIC_PLAYERS=n` env | Load testing with n distinct recipients |
-| PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times" | The digest follows an already-delivered first notification |
+| PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times", the first attacker again plus new ones → "under attack by A and B! (N more attacks)" | The digest follows an already-delivered first notification |
 | NFR-3 memory | ≤ 300 MB @ 10k | 382 MB @ 10k (p99 27 ms): target missed | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
-**Test inventory:** 183 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.6% for `packages/core`, 97.3% for `apps/server` and 98.8% combined (1,214 of 1,229 lines, `pnpm test:coverage`).
+**Test inventory:** 194 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.2% for `packages/core`, 97.3% for `apps/server` and 98.5% combined (1,202 of 1,220 lines, `pnpm test:coverage`).

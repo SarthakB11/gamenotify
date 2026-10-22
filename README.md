@@ -54,7 +54,7 @@ The recording shows the real server, SSE stream and React client running locally
    - a defeat notifies both players
 5. **Preferences:**
    - turning social events off means nothing is created
-   - muting keeps notifications silently in the inbox, without a pop-up
+   - muting keeps notifications silently in the inbox: an open client receives them flagged `silent` (inbox and unread count update, no pop-up)
    - read receipts sync with the server
 
 For pacing, the recording runs the server with `GROUP_WINDOW_MS=6000`; the default grouping window is 10 s.
@@ -95,12 +95,12 @@ docker run --rm -p 3000:3000 \
 
 The image itself defaults to `NODE_ENV=production`: it hides `/v1/dev/*` and refuses to start unless `AUTH_SECRET` and `INTERNAL_API_KEY` are set to private values of 16+ characters (the public `dev-internal-key` is rejected).
 
-So the production image serves the ingest, inbox and stream API only. The bundled web UI loads, but its player picker has no dev login to call; use `docker compose up --build` for the interactive demo. Compose also sets `GROUP_WINDOW_MS=5000`, a 5 s grouping window, so a burst collapses quickly enough to watch.
+In production the image serves ingest (`POST /v1/events`), health, readiness and metrics. The inbox and stream routes need a session token that, in this project, only the dev login issues (a real deployment would plug in its identity provider), so use `docker compose up --build` for the interactive demo. Compose also sets `GROUP_WINDOW_MS=5000`, a 5 s grouping window, so a burst collapses quickly enough to watch.
 
 **Everything CI runs:**
 
 ```bash
-pnpm verify   # lint → typecheck → tests (180) → architecture rules → build → golden demo check
+pnpm verify   # lint → typecheck → tests (194) → architecture rules → build → golden demo check
 pnpm bench    # performance budgets (p99 < 1 ms per event, ≥ 50k events/s)
 pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & RSS
 ```
@@ -132,26 +132,24 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 
 ### Core vs extras
 
-The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-22 (CSS, test files and `testing/` helpers excluded). The two "of which" extras rows are exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts` (pipeline stages); `delivery/delivery-router.ts`, `delivery/retry-policy.ts` and `dead-letter-queue.ts` (delivery retry and DLQ):
+The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-22 (CSS, test files and `testing/` helpers excluded). The "of which" extras row is exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts`:
 
 | Area | Lines | Brief or extra |
 |---|---|---|
-| `packages/core/src` total (excluding the `testing/` helpers) | 2,855 | core package |
-| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 378 | extra |
-| of which: delivery router with retry/backoff, retry policy, dead-letter queue | 146 | extra |
-| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters) | 2,331 | core path and its plumbing |
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,801 | core package |
+| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 391 | extra |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters, delivery router) | 2,410 | core path and its plumbing |
 | `apps/demo` (console demo) | 120 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 283 | 1,281 | extra |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 284 | 1,284 | extra |
 | `apps/web/src` (React client) | 618 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
 | `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
 
 The extra stages are registered in one place, [`packages/core/src/composition.ts`](packages/core/src/composition.ts):
 
-- line 109: `IdempotencyStage` joins `PreferenceStage` in `stages`
-- lines 111 to 119: `RateLimitStage` (with `TokenBucketLimiter`) forms `emissionStages`
-- line 120: `GroupingStage` is created and passed to the dispatcher
-- lines 122 to 126: dead-letter queue and `exponentialBackoff` retry are passed to `DeliveryRouter`
+- line 106: `IdempotencyStage` joins `PreferenceStage` in `stages`
+- lines 108 to 116: `RateLimitStage` (with `TokenBucketLimiter`) forms `emissionStages`
+- line 117: `GroupingStage` is created and passed to the dispatcher
 
 Reading the code (not by deleting it): the dispatcher takes `stages` and `emissionStages` as plain arrays, so removing the first two leaves the receive, resolve, preference check, render, store, send flow intact. Grouping and the delivery router are not optional stages. The dispatcher calls `grouping.offer()` unconditionally (it passes through events that carry no group key), and `DeliveryRouter` always wraps `InAppChannel`, so removing those means editing the dispatcher or router, not just the wiring. Quiet hours live inside `PreferenceStage` itself.
 
@@ -167,12 +165,12 @@ flowchart LR
   BUS --> R["Intent resolvers<br/>(Strategy per event kind)"]
   R --> P["Pipeline (Chain of Responsibility)<br/>idempotency → preferences"]
   P --> G["Grouping<br/>leading edge + digest"] --> L["Rate limit<br/>emitted only"]
-  L --> RN["Renderer<br/>(templates)"] --> IB["Inbox<br/>per-player seq"] --> D["DeliveryRouter<br/>retry · DLQ"]
+  L --> RN["Renderer<br/>(templates)"] --> IB["Inbox<br/>per-player seq"] --> D["DeliveryRouter<br/>channels"]
   D --> SSE["SSE gateway"] ==> C["Game client / React demo"]
 ```
 
 - **Hexagonal core.** `packages/core` has **zero npm dependencies** and no HTTP or file I/O. Everything external (sender, clock, IDs, storage, logger, metrics) is a port. An architecture test fails the build if a layer boundary is crossed.
-- **Reject early, render late.** Filters run on a cheap *intent*. Only surviving intents are rendered into a `Notification`. A suppressed event costs about **1.2 µs**, against **4.9 µs** for one that is fully rendered, stored and sent (`pnpm bench`, 2026-10-21, Linux x64 (WSL2), i7-12650H, Node 24.22.1).
+- **Reject early, render late.** Filters run on a cheap *intent*. Only surviving intents are rendered into a `Notification`. A suppressed event costs about **1.0 µs**, against **4.1 µs** for one that is fully rendered, stored and sent (`pnpm bench`, 2026-10-22, Linux x64 (WSL2), i7-12650H, Node 24.22.1).
 - **Why SSE rather than WebSockets:** notifications only flow server → client. SSE is one-way, plain HTTP (proxy- and HTTP/2-friendly) and has simple framing, and its `Last-Event-ID` replay semantics are reused through the `?lastEventId=` query parameter. Because the stream URL carries a single-use ticket, the browser's own reconnect cannot reuse it: the web client closes the stream, fetches a new ticket and reopens with `?lastEventId=`. Client → server actions use REST. A WebSocket adapter would slot in behind the same `NotificationSender` port.
 
 Full design: **[docs/HLD.md](docs/HLD.md)** (high level) · **[docs/LLD.md](docs/LLD.md)** (classes, algorithms, APIs, tests) · **[docs/adr/](docs/adr)** (decision records).
@@ -208,7 +206,6 @@ test/golden/       expected demo output (acceptance test)
 | `GET` | `/v1/players` | Seeded players for the demo's picker. No auth |
 | `GET` | `/v1/me` | Bearer or cookie. Current player, display name and unread count |
 | `POST` | `/v1/dev/logout` | Clears the session cookie. 204 |
-| `GET` | `/v1/admin/dlq` | `x-internal-key`. The most recent dead-lettered entries, newest first (`?limit=` 1 to 1000, default 100) |
 | `GET` | `/healthz` · `/readyz` | Liveness, and readiness (503 while draining). No auth |
 | `GET` | `/metrics` | Prometheus text. No auth: intended for an internal scrape, so do not expose it publicly |
 
@@ -244,16 +241,16 @@ Errors use RFC 9457 Problem Details. Configuration is done with env vars (see `.
 
 ## Measured
 
-Micro-benchmarks (`pnpm bench`) were run on 2026-10-21 on a quiet machine: Linux x64 (WSL2), i7-12650H, Node 24.22.1. On a loaded machine the same run measured roughly 8 µs/event and ~81k events/s, still within the budgets (p99 < 1 ms per event, ≥ 50k events/s). The two SSE rows come from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
+Micro-benchmarks (`pnpm bench`) were run on 2026-10-22 on a quiet machine: Linux x64 (WSL2), i7-12650H, Node 24.22.1. Throughput varies between runs on a shared machine: one of four runs measured ~73k events/s, still within the budgets (p99 < 1 ms per event, ≥ 50k events/s). The two SSE rows come from an earlier run on a 2-vCPU Xeon @ 2.1 GHz (Node 24.22) and were not repeated.
 
 | What | Result |
 |---|---|
-| `dispatcher.handle` (full path) | 4.9 µs avg · p99 ≈ 25 µs |
-| Suppressed event (render skipped) | 1.2 µs avg |
-| End-to-end through the bus | ≈ 183k events/s |
+| `dispatcher.handle` (full path) | 4.1 µs avg · p99 ≈ 17 µs |
+| Suppressed event (render skipped) | 1.0 µs avg |
+| End-to-end through the bus | ≈ 200k events/s (155k to 207k over three quiet runs) |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 183 passing · line coverage 98.8% across core and server (core alone 99.6%, server 97.3%) |
+| Tests | 194 passing · line coverage 98.5% across core and server (core alone 99.2%, server 97.3%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 
