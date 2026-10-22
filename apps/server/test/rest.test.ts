@@ -188,6 +188,23 @@ describe('POST /v1/events (ingestion for real producers)', () => {
     ).toBe(400);
   });
 
+  it('answers an unknown or missing kind with one clear 400', async () => {
+    const { base } = await setup();
+    const post = (json: unknown) => api(base)('/v1/events', { method: 'POST', headers: key, json });
+    const unknown = await post({ kind: 'Foo', playerId: 1 });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body).toMatchObject({ title: 'Invalid request' });
+    const detail = (unknown.body as { detail: string }).detail;
+    expect(detail).toMatch(/unknown event kind "Foo"; expected one of: game\.player_leveled_up, /);
+    expect(detail).not.toMatch(/must match|oneOf|const/);
+    const missing = await post({ playerId: 1 });
+    expect(missing.status).toBe(400);
+    expect((missing.body as { detail: string }).detail).toMatch(/missing event kind; expected one of: /);
+    const bad = await post({ kind: 'game.player_leveled_up', playerId: 1 });
+    expect(bad.status).toBe(400);
+    expect((bad.body as { detail: string }).detail).toMatch(/newLevel/);
+  });
+
   it('returns 503 + Retry-After when the bus is full', async () => {
     const { base, app } = await setup({ BUS_CAPACITY: '2' });
     // Stall the consumer so the queue fills up deterministically.

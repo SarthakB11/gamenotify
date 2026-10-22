@@ -193,6 +193,15 @@ describe('loadConfig', () => {
     expect(c.core.minItemRarity).toBe(3);
     expect(c.authSecretGenerated).toBe(true);
   });
+  it('raises the default max grouping window to match a long GROUP_WINDOW_MS', () => {
+    const c = loadConfig({ NODE_ENV: 'test', GROUP_WINDOW_MS: '90000' });
+    expect(c.core.grouping).toEqual({ windowMs: 90_000, maxWindowMs: 90_000 });
+  });
+  it('rejects an explicit GROUP_MAX_WINDOW_MS below GROUP_WINDOW_MS', () => {
+    expect(() => loadConfig({ NODE_ENV: 'test', GROUP_WINDOW_MS: '5000', GROUP_MAX_WINDOW_MS: '1000' })).toThrow(
+      /GROUP_MAX_WINDOW_MS.*GROUP_WINDOW_MS/,
+    );
+  });
   it('fails fast on invalid values and missing production secrets', () => {
     expect(() => loadConfig({ PORT: 'abc' })).toThrow(/PORT/);
     expect(() => loadConfig({ NODE_ENV: 'staging' })).toThrow(/NODE_ENV/);

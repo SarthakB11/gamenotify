@@ -53,6 +53,13 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     }
   }
   const d = DEFAULT_CORE_CONFIG;
+  const groupWindowMs = int(env, 'GROUP_WINDOW_MS', d.grouping.windowMs, 1);
+  const groupMaxExplicit = env.GROUP_MAX_WINDOW_MS !== undefined && env.GROUP_MAX_WINDOW_MS !== '';
+  // A long window alone must not trip the stage's windowMs <= maxWindowMs check, so the default cap follows it.
+  const groupMaxWindowMs = int(env, 'GROUP_MAX_WINDOW_MS', Math.max(d.grouping.maxWindowMs, groupWindowMs), 1);
+  if (groupMaxExplicit && groupMaxWindowMs < groupWindowMs) {
+    throw new Error(`GROUP_MAX_WINDOW_MS (${groupMaxWindowMs}) must be >= GROUP_WINDOW_MS (${groupWindowMs})`);
+  }
 
   return Object.freeze({
     host: env.HOST ?? '0.0.0.0',
@@ -78,10 +85,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
         capacity: int(env, 'RATE_CAPACITY', d.rateLimit.capacity, 1),
         windowMs: int(env, 'RATE_WINDOW_MS', d.rateLimit.windowMs, 1),
       },
-      grouping: {
-        windowMs: int(env, 'GROUP_WINDOW_MS', d.grouping.windowMs, 1),
-        maxWindowMs: int(env, 'GROUP_MAX_WINDOW_MS', d.grouping.maxWindowMs, 1),
-      },
+      grouping: { windowMs: groupWindowMs, maxWindowMs: groupMaxWindowMs },
       inbox: { capacity: int(env, 'INBOX_CAPACITY', d.inbox.capacity, 1), ttlMs: int(env, 'INBOX_TTL_MS', d.inbox.ttlMs, 1) },
       retry: {
         maxAttempts: int(env, 'RETRY_MAX_ATTEMPTS', d.retry.maxAttempts, 1),

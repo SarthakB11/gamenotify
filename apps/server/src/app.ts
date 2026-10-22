@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import {
+  ALL_EVENT_KINDS,
   buildCore,
   type Core,
   EventId,
@@ -368,7 +369,22 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
   // ── Ingestion for real producers ───────────────────────────────────────────
   server.post<{ Body: Record<string, unknown> & { kind: string } }>(
     '/v1/events',
-    { schema: { body: platformEventBody }, preHandler: [refuseWhenClosing, requireInternalKey] },
+    {
+      schema: { body: platformEventBody },
+      // Runs before schema validation: the oneOf schema would otherwise list every branch's failures for a bad kind.
+      preValidation: async (req, reply) => {
+        const kind = (req.body as { kind?: unknown } | null | undefined)?.kind;
+        if (typeof kind === 'string' && (ALL_EVENT_KINDS as readonly string[]).includes(kind)) return;
+        const expected = `expected one of: ${ALL_EVENT_KINDS.join(', ')}`;
+        return problem(
+          reply,
+          400,
+          'Invalid request',
+          kind === undefined ? `missing event kind; ${expected}` : `unknown event kind ${JSON.stringify(kind)}; ${expected}`,
+        );
+      },
+      preHandler: [refuseWhenClosing, requireInternalKey],
+    },
     async (req, reply) => {
       const body = req.body;
       const event = {
