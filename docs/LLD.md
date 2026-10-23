@@ -1244,4 +1244,4 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times", the first attacker again plus new ones → "under attack by A and B! (N more attacks)" | The digest follows an already-delivered first notification |
 | NFR-3 memory | ≤ 300 MB @ 10k | 382 MB @ 10k (p99 27 ms): target missed | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
-**Test inventory:** 194 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.2% for `packages/core`, 97.3% for `apps/server` and 98.5% combined (1,202 of 1,220 lines, `pnpm test:coverage`).
+**Test inventory:** 210 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.9% for `packages/core`, 97.8% for `apps/server` and 99.1% combined (1,219 of 1,230 lines, `pnpm test:coverage`).

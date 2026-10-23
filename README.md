@@ -100,7 +100,7 @@ In production the image serves ingest (`POST /v1/events`), health, readiness, me
 **Everything CI runs:**
 
 ```bash
-pnpm verify   # lint → typecheck → tests (194) → architecture rules → build → golden demo check
+pnpm verify   # lint → typecheck → tests (210) → architecture rules → build → golden demo check
 pnpm bench    # performance budgets (p99 < 1 ms per event, ≥ 50k events/s)
 pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & RSS
 ```
@@ -132,18 +132,18 @@ pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & R
 
 ### Core vs extras
 
-The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-22 (CSS, test files and `testing/` helpers excluded). The "of which" extras row is exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts`:
+The brief welcomes additional features once the core is complete. These were added afterwards and plug in as pipeline stages or adapters. Line counts are non-test TypeScript and TSX, measured with `wc -l` over the files in each row on 2026-10-23 (CSS, test files and `testing/` helpers excluded). The "of which" extras row is exactly these files under `packages/core/src/application/` and `packages/core/src/infrastructure/memory/`: `pipeline/idempotency-stage.ts`, `pipeline/rate-limit-stage.ts`, `pipeline/token-bucket.ts`, `pipeline/grouping-stage.ts`, `pipeline/quiet-hours.ts` and `ttl-lru-idempotency-store.ts`:
 
 | Area | Lines | Brief or extra |
 |---|---|---|
-| `packages/core/src` total (excluding the `testing/` helpers) | 2,801 | core package |
-| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 391 | extra |
-| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters, delivery router) | 2,410 | core path and its plumbing |
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,816 | core package |
+| of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 400 | extra |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters, delivery router) | 2,416 | core path and its plumbing |
 | `apps/demo` (console demo) | 120 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 284 | 1,284 | extra |
-| `apps/web/src` (React client) | 618 | extra |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 284 | 1,313 | extra |
+| `apps/web/src` (React client) | 661 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
-| `Dockerfile`, `docker-compose.yml`, CI workflow | 112 | extra |
+| `Dockerfile`, `docker-compose.yml`, CI workflow | 114 | extra |
 
 The extra stages are registered in one place, [`packages/core/src/composition.ts`](packages/core/src/composition.ts):
 
@@ -250,7 +250,7 @@ Micro-benchmarks (`pnpm bench`) were run on 2026-10-22 on a quiet machine: Linux
 | End-to-end through the bus | ≈ 200k events/s (155k to 207k over three quiet runs) |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 194 passing · line coverage 98.5% across core and server (core alone 99.2%, server 97.3%) |
+| Tests | 210 passing · line coverage 99.1% across core and server (core alone 99.9%, server 97.8%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 

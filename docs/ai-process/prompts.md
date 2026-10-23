@@ -357,3 +357,22 @@ Prompts, verbatim:
 
 - `pnpm verify`: green, 194 tests. Coverage re-measured: core 99.2%, server 97.3%, combined 98.5% (1,202 of 1,220 lines).
 - `pnpm bench`: budgets met (~200k events/s, worst p99 ≈ 17 µs).
+
+## 16. Session 12: Claude Code (send-readiness loop)
+
+Prompts, verbatim:
+
+> yes and are we ready to send repo now? If any fixes still come then do them and rank again. and keep going until we're totally ready to send repo link.
+
+> resume, ubuntu crashed. ensure proper ram and core utilization.
+
+**Workflow and findings:**
+
+- The ninth cold review scored 8.3/10 (ship, nothing must be fixed). The parallel clean-clone run passed every check, including a real-browser test of silent entries (inbox and badge updated, no toast). The remaining findings were fixed by two workers in separate worktrees, one for the core and one for the server, web and docs.
+- Core: a follower digest's `groupCount` is now always the number of distinct new followers. The dedup store's eviction matches ring slots by identity, which fixed a real bug found while checking a review claim: a key released and re-sent in the same millisecond was evicted by its own stale slot (failing test first). The rollback comment and LLD no longer promise an HTTP producer a retry it never makes, and the dedup window under load (min(TTL, maxKeys / rate)) is documented with a sizing rule.
+- Server: the internal-key check and the production dev gate run before body validation, so a bad body can no longer leak the schema or a route's existence. Item and challenge ids need a letter or digit. The dev server binds to loopback by default (containers set `HOST=0.0.0.0`). The stream sends an explicit `replayed` event after the handshake replay, replacing the client's 250 ms quiet-gap guess. The unread badge uses the server's count. The production UI explains that login is development-only. `.env` is loaded in `main.ts`, and a server coverage threshold (90% lines) was added.
+- The machine (16 cores, 7.7 GB RAM) crashed while parallel builds, browser checks and load tests ran at once. From then on heavy jobs ran one at a time, with Vitest capped at 4 workers and a Node heap limit.
+
+**Verification:**
+
+- Verify steps green, 210 tests. Coverage re-measured: core 99.9%, server 97.8%, combined 99.1% (1,219 of 1,230 lines).
