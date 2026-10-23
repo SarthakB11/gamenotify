@@ -100,7 +100,7 @@ In production the image serves ingest (`POST /v1/events`), health, readiness, me
 **Everything CI runs:**
 
 ```bash
-pnpm verify   # lint → typecheck → tests (210) → architecture rules → build → golden demo check
+pnpm verify   # lint → typecheck → tests (214) → architecture rules → build → golden demo check
 pnpm bench    # performance budgets (p99 < 1 ms per event, ≥ 50k events/s)
 pnpm load:sse # 2,000 live SSE connections @ 1,000 events/s; reports latency & RSS
 ```
@@ -136,12 +136,12 @@ The brief welcomes additional features once the core is complete. These were add
 
 | Area | Lines | Brief or extra |
 |---|---|---|
-| `packages/core/src` total (excluding the `testing/` helpers) | 2,816 | core package |
+| `packages/core/src` total (excluding the `testing/` helpers) | 2,823 | core package |
 | of which: idempotency, rate limit (token bucket), grouping, quiet hours, TTL/LRU dedup store | 400 | extra |
-| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters, delivery router) | 2,416 | core path and its plumbing |
+| of which: everything else (domain, resolvers, simulators, preference stage and service, renderer, dispatcher, bus, in-memory inbox and adapters, delivery router) | 2,423 | core path and its plumbing |
 | `apps/demo` (console demo) | 120 | brief |
-| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 284 | 1,313 | extra |
-| `apps/web/src` (React client) | 661 | extra |
+| `apps/server/src` (Fastify, SSE gateway, REST, auth, metrics), of which `sse/` is 284 | 1,318 | extra |
+| `apps/web/src` (React client) | 670 | extra |
 | `scripts/` (bench, SSE load test, golden check) | 262 | extra |
 | `Dockerfile`, `docker-compose.yml`, CI workflow | 114 | extra |
 
@@ -197,7 +197,7 @@ test/golden/       expected demo output (acceptance test)
 |---|---|---|
 | `POST` | `/v1/dev/login` | `{ playerId }` → session cookie + bearer token (dev only) |
 | `POST` | `/v1/stream/ticket` | Bearer → `{ ticket, expiresInMs }`: a 30 s single-use ticket for the stream URL |
-| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `replayed`, `resync`. Auth: `?ticket=` (browsers), `Authorization: Bearer` or the `gid` cookie. Honours `Last-Event-ID` and `?lastEventId=` |
+| `GET` | `/v1/stream` | SSE. Events: `hello`, `notification`, `replayed`, `resync`. Auth: `?ticket=` (browsers), `Authorization: Bearer` or the `gid` cookie. Honours `Last-Event-ID` and `?lastEventId=`; a cursor that cannot be parsed gets `resync`, no cursor gets `hello` |
 | `GET` | `/v1/notifications?before=&limit=` | Inbox page, newest first |
 | `POST` | `/v1/notifications/:id/read` · `/v1/notifications/read-all` | Read receipts |
 | `GET` / `PATCH` | `/v1/preferences` | JSON merge patch with `ETag` / `If-Match` (412 on conflict) |
@@ -250,7 +250,7 @@ Micro-benchmarks (`pnpm bench`) were run on 2026-10-22 on a quiet machine: Linux
 | End-to-end through the bus | ≈ 200k events/s (155k to 207k over three quiet runs) |
 | SSE fan-out, 2k connections @ 1k events/s | p50 7 ms · p99 20 ms · RSS 195 MB |
 | SSE fan-out, 10k connections @ 2k events/s | p50 9 ms · p99 27 ms · RSS 382 MB |
-| Tests | 210 passing · line coverage 99.1% across core and server (core alone 99.9%, server 97.8%) |
+| Tests | 214 passing · line coverage 99.3% across core and server (core alone 99.9%, server 98.3%) |
 
 For the SSE runs, the load client runs on the same machine, so latency includes client-side parsing.
 

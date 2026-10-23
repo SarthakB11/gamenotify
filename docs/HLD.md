@@ -53,7 +53,7 @@ The brief asks us to focus on the core logic: **receive events → decide the no
 | FR-8 | In-app, real-time channel only | Brief, Channels |
 | FR-9 | Per-user enable/disable per **category** (Game, Social), held in a simple map | Brief, Preferences |
 | FR-10 | Ingest events emitted by *different* platform parts (game engine, social system) | Brief, Event Handling |
-| FR-11 | Dispatch pipeline: determine type → create `Notification` → check preferences → send | Brief, Dispatching |
+| FR-11 | Dispatch pipeline: determine type → create `Notification` → check preferences → send. The code checks preferences before the `Notification` is created (reject early, render late, ADR-004), so a disabled type never allocates one; the observable behaviour is the same | Brief, Dispatching |
 | FR-12 | Runnable example that reproduces `gameEngine.playerLeveledUp(1, 15)`, `itemAcquired(2, "SwordOfAzeroth")`, `friendRequestSent(3, 1)`, `friendRequestAccepted(1, 3)` | Brief, Example Usage |
 | FR-13 | Per-event-type overrides, mute-until and quiet hours | Extra (chosen) |
 | FR-14 | Offline inbox, plus replay of missed notifications on reconnect | Extra (chosen) |

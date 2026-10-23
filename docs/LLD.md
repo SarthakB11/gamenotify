@@ -712,10 +712,10 @@ PvP digest wording (`PVP_ATTACKED`), by what was held after the delivered first 
 |---|---|---|
 | Bram, Bram (only repeats of the leading attacker) | 2 | `Player 'Bram' attacked you 2 more times!` |
 | Kael, Kael (one new attacker) | 2 | `Player 'Kael' attacked you 2 times!` |
-| Kael, Mira (several new attackers) | 2 | `You're under attack by Player 'Kael' and 1 other!` |
+| Kael, Mira (several new attackers) | 2 | `You're under attack by Player 'Kael' and 1 other! (2 attacks)` |
 | Bram, Kael (repeat plus a new attacker) | 2 | `You're under attack by Player 'Bram' and Player 'Kael'! (2 more attacks)` |
 
-The mixed form lists the leading attacker first, then the new attackers (up to three, then `and N others`), and the bracket counts every held attack.
+The mixed form lists the leading attacker first, then the new attackers (up to three, then `and N others`), and the bracket counts every held attack. The several-new-attackers form carries the same bracket without "more", because none of those attacks was part of the delivered first notification. Only a repeat of the leading attacker says "more".
 
 - **Defaults:** `W = 10 s`, `Wmax = 60 s`. The demo uses `W = 1.5 s` so the effect is visible.
 - **Conservation property** (fast-check): for any burst of `n` offers, `passed + Σ groupCount(flushed) = n` for `PVP_ATTACKED`, so no attack is lost from a digest. For `NEW_FOLLOWER`, `groupCount` is the number of distinct new followers in the digest (equal to `distinctActors`). A repeat follow, by the leading follower or by anyone else, adds no information, so it is not in `groupCount` and is counted in `absorbedRepeats` instead: `passed + Σ groupCount(flushed) + absorbedRepeats = n`, exactly. Example: Bram delivered, then Bram, Kael, Kael, Mira held gives `groupCount` 2, `distinctActors` 2, `Player 'Kael' and 1 other started following you.` and 2 absorbed repeats.
@@ -751,7 +751,7 @@ export const EN_CATALOG = {
 | LEVEL_UP | `Congratulations! You've reached level 15!` |
 | ITEM_ACQUIRED | `You've acquired the legendary Sword of Azeroth!` |
 | CHALLENGE_COMPLETED | `Challenge complete! You've conquered 'Dragon's Lair'.` |
-| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, one attacker who also sent the delivered first attack: `Player 'Zed' attacked you 3 more times!`. Grouped, one attacker who is new: `Player 'Kael' attacked you 3 times!` Grouped, several new attackers: `You're under attack by Player 'Zed' and 2 others!` Grouped, the first attacker again plus new ones: `You're under attack by Player 'Zed' and Player 'Kael'! (2 more attacks)` |
+| PVP_ATTACKED | `You're under attack by Player 'Zed'!` Grouped, one attacker who also sent the delivered first attack: `Player 'Zed' attacked you 3 more times!`. Grouped, one attacker who is new: `Player 'Kael' attacked you 3 times!` Grouped, several new attackers: `You're under attack by Player 'Zed' and 2 others! (3 attacks)` Grouped, the first attacker again plus new ones: `You're under attack by Player 'Zed' and Player 'Kael'! (2 more attacks)` |
 | PVP_DEFEATED / VICTORY | `You were defeated by Player 'Zed'.` / `You defeated Player 'Mira'!` |
 | FRIEND_REQUEST | `Player 'Kael' has sent you a friend request.` |
 | FRIEND_ACCEPTED | `Player 'Aria' accepted your friend request.` |
@@ -873,7 +873,7 @@ Colours are disabled when `NO_COLOR` is set or stdout is not a TTY, which keeps 
 **Route `GET /v1/stream`:**
 
 ```
-1. auth: playerId ← verify cookie `gid` (HMAC, §6.5); 401 otherwise
+1. auth (onRequest, before anything else): `?ticket=` consumed once (§6.5), else Bearer token or cookie `gid` (HMAC); 401 otherwise
 2. reply.hijack(); res.writeHead(200, {
      'Content-Type': 'text/event-stream; charset=utf-8',
      'Cache-Control': 'no-store', 'Connection': 'keep-alive',
@@ -888,7 +888,8 @@ Colours are disabled when `NO_COLOR` is set or stdout is not a TTY, which keeps 
        else for e in r.entries → conn.write(frame(e)); conn.lastSeq = e.seq
             then send(event:'replayed', data:{count})   // end-of-replay marker, no id
    else if cursor (epoch mismatch) → send(event:'resync', data:{reason:'restart'})
-   else → send(event:'hello', data:{epoch, unread})       // first connect: client fetches page
+   else if a cursor was sent but cannot be parsed → send(event:'resync', data:{reason:'malformed_cursor'})
+   else (no cursor) → send(event:'hello', data:{epoch, unread})       // first connect: client fetches page
 6. conn.goLive(): flush conn.pending where seq > conn.lastSeq; state = LIVE
 7. res.on('close') → registry.remove(conn)
 ```
@@ -904,7 +905,7 @@ data: {"seq":42,"silent":false,"notification":{"id":"0192…","type":"LEVEL_UP",
 
 ```
 
-- `event: replayed` (`data: {"count":2}`, no `id`) is sent once, right after the handshake replay, on a reconnect that resumed from a valid cursor (also when `count` is `0`). `notification` frames before it are history; frames after it are live. It is not sent on a first connect (`hello`) or after a `resync`, which have no replay. The web client raises toasts only for frames after it, instead of guessing from a quiet gap.
+- `event: replayed` (`data: {"count":2}`, no `id`) is sent once, right after the handshake replay, on a reconnect that resumed from a valid cursor (also when `count` is `0`). `notification` frames before it are history; frames after it are live. It is not sent on a first connect (`hello`) or after a `resync`, which have no replay. A cursor that cannot be parsed (a malformed `Last-Event-ID` header or `?lastEventId=`) counts as a lost cursor: the reply is `resync` with `reason: "malformed_cursor"`, not `hello`, because a client that sent a cursor expects continuity. Only an absent or empty cursor is a first connect. The web client raises toasts only for frames after it, instead of guessing from a quiet gap.
 - `data` is produced by a **precompiled `fast-json-stringify` serializer** generated from the frame's JSON Schema. It is about 2–5× faster than `JSON.stringify` for a fixed shape.
 - Frames are cached per entry (`WeakMap<InboxEntry, string>`) so multi-device fan-out serializes once.
 
@@ -970,7 +971,7 @@ All routes validate requests with JSON Schema (Ajv, `removeAdditional: false`, s
 
 | Part | Detail |
 |---|---|
-| `useNotificationStream()` | Wraps `EventSource`, opened on `/v1/stream?ticket=…&lastEventId=…` with a single-use ticket (§6.5). Handles `hello`, `notification`, `replayed` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` and `unread`: the server's count (from `hello` and each inbox page), kept in step locally (+1 per new unread frame, silent ones included; reduced by read and read-all), so it stays right beyond the 50 loaded entries |
+| `useNotificationStream()` | Wraps `EventSource`, opened on `/v1/stream?ticket=…&lastEventId=…` with a single-use ticket (§6.5). Handles `hello`, `notification`, `replayed` and `resync`. Keeps a `Map<seq, entry>` (dedups by `seq` and id, then sorts by `seq`). `hello` merges the fetched page into the map; `resync` replaces it but keeps frames that arrived during the fetch. Exposes status `connecting / live / reconnecting` and `unread`: the server's count (from `hello` and each inbox page), kept in step locally (+1 per new unread frame, silent ones included; reduced by read and read-all; read-all sends the highest loaded `seq` as `upToSeq` and subtracts the server's `marked`, so an entry that arrived during the request stays unread), so it stays right beyond the 50 loaded entries |
 | Toasts | Only for `silent: false` (a silent frame still joins the inbox list and the unread count), and only for live frames: frames replayed after a reconnect (everything before the server's `replayed` event) add to the inbox without a toast. Auto-dismiss after 5 s. `aria-live="polite"` |
 | Inbox panel | Initial `GET /v1/notifications`. Infinite scroll by `before`. Mark read on click |
 | Preferences panel | Category switches, a per-type override tri-state (inherit / on / off), mute 1 h, quiet hours. Uses `PATCH` with `If-Match` |
@@ -1089,7 +1090,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | T-11 | Unit | Inbox | Contiguous seq. Ring eviction updates `firstSeq` and `unread`. `since` → entries / resync. TTL prune |
 | T-12 | Unit | DeliveryRouter | OFFLINE is not a failure. A throwing, rejecting or `FAILED` channel is logged and counted, leaves the entry in the inbox and does not affect other channels or the dispatcher. Sync path returns no Promise |
 | T-13 | Property | Ordering | For random interleavings across players, each player's received seqs are strictly increasing |
-| T-14 | Integration | SSE | Auth 401. `hello` on first connect. Live frame format. Replay from `Last-Event-ID`. `resync` on epoch mismatch or evicted cursor |
+| T-14 | Integration | SSE | Auth 401. `hello` on first connect. Live frame format. Replay from `Last-Event-ID`. `resync` on epoch mismatch, evicted cursor or unparseable cursor |
 | T-15 | Integration | SSE race | Events published *during* replay are delivered exactly once, in order (handoff §6.3) |
 | T-16 | Integration | SSE back-pressure | A paused reader is evicted at `MAX_BUFFERED_FRAMES`. Others unaffected |
 | T-17 | Integration | REST | Preferences ETag/If-Match/412. Merge-patch validation. Inbox paging. Read and read-all. Problem Details shape |
@@ -1100,7 +1101,7 @@ All tests use `FakeClock`, a `ManualScheduler` (advance time deterministically),
 | T-22 | Performance | mitata | `dispatcher.handle` p99 < 1 ms. ≥ 50k events/s. Allocation per event tracked |
 | T-23 | Load | `scripts/load-sse.ts` | 10k EventSource connections, 1k notifications/s. Report p50/p99 end-to-end and RSS |
 
-**Coverage gate:** `packages/core` ≥ 90% lines and branches. The server is ≥ 90% lines (`vitest.config.ts`).
+**Coverage gate:** `packages/core` ≥ 90% lines, functions and statements and ≥ 85% branches. The server is ≥ 90% lines (`vitest.config.ts`).
 
 ---
 
@@ -1241,7 +1242,7 @@ Summary: 15 published · 10 delivered · 3 suppressed · 4 held → grouped
 | Cookies | `@fastify/cookie` | 10-line parser | Read-only use |
 | Stream auth | Cookie | Bearer or cookie, plus a short-lived single-use `?ticket=` for the browser | Per-tab sessions: two tabs can be two players; the session token never appears in a URL |
 | Synthetic players | — | `SYNTHETIC_PLAYERS=n` env | Load testing with n distinct recipients |
-| PvP grouped text | "and N others" | Distinct attackers → "and N others"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times", the first attacker again plus new ones → "under attack by A and B! (N more attacks)" | The digest follows an already-delivered first notification |
+| PvP grouped text | "and N others" | Distinct attackers → "and N others! (M attacks)"; one attacker who also triggered the delivered first notification → "attacked you N more times", a different single attacker → "attacked you N times", the first attacker again plus new ones → "under attack by A and B! (N more attacks)" | The digest follows an already-delivered first notification |
 | NFR-3 memory | ≤ 300 MB @ 10k | 382 MB @ 10k (p99 27 ms): target missed | Reported, not hidden. Next step: smaller socket buffers and a leaner per-connection state |
 
-**Test inventory:** 210 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.9% for `packages/core`, 97.8% for `apps/server` and 99.1% combined (1,219 of 1,230 lines, `pnpm test:coverage`).
+**Test inventory:** 214 tests in 17 files: unit, property, integration (real server + SSE parser), architecture, and the golden demo. Line coverage is 99.9% for `packages/core`, 98.3% for `apps/server` and 99.3% combined (1,227 of 1,236 lines, `pnpm test:coverage`). Two consecutive measurements gave the same covered lines.
