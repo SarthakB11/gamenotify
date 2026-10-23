@@ -118,6 +118,33 @@ describe('GET /v1/stream (SSE gateway)', () => {
     s.close();
   });
 
+  it('asks the client to resync when its cursor cannot be parsed, from the header or the query', async () => {
+    const { base } = await setup();
+    const aria = await login(base, 1);
+    const header = await openStream(base, aria, 'garbage');
+    await header.waitFor((e) => e.some((x) => x.event === 'resync'));
+    expect(header.events[0]?.data).toMatchObject({ reason: 'malformed_cursor' });
+    expect(header.events.some((e) => e.event === 'hello')).toBe(false);
+    header.close();
+    const query = await openTicketStream(base, await streamTicket(base, aria), 'garbage');
+    await query.waitFor((e) => e.some((x) => x.event === 'resync'));
+    expect(query.events[0]?.data).toMatchObject({ reason: 'malformed_cursor' });
+    query.close();
+  });
+
+  it('a valid cursor is not resynced and no cursor still gets hello', async () => {
+    const { base, app } = await setup();
+    const aria = await login(base, 1);
+    const valid = await openStream(base, aria, `${app.core.inbox.epoch}-0`);
+    await valid.waitFor((e) => e.some((x) => x.event === 'replayed'));
+    expect(valid.events.some((e) => e.event === 'resync' || e.event === 'hello')).toBe(false);
+    valid.close();
+    const none = await openStream(base, aria);
+    await none.waitFor((e) => e.some((x) => x.event === 'hello'));
+    expect(none.events.some((e) => e.event === 'resync')).toBe(false);
+    none.close();
+  });
+
   it('asks the client to resync when its cursor fell out of retention', async () => {
     const { base, app, simulate } = await setup({ INBOX_CAPACITY: '2' });
     const aria = await login(base, 1);

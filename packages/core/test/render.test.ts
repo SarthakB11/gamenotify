@@ -72,8 +72,17 @@ describe('message catalog (exact strings)', () => {
       msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(3)], distinctActors: 1, groupCount: 3, leadingActorId: PlayerId(5) }),
     ).toBe("Player 'Kael' attacked you 3 times!");
     expect(msg({ type: 'PVP_ATTACKED', actorIds: [PlayerId(5), PlayerId(6)], distinctActors: 3, groupCount: 3 })).toBe(
-      "You're under attack by Player 'Zed' and 2 others!",
+      "You're under attack by Player 'Zed' and 2 others! (3 attacks)",
     );
+    expect(
+      msg({
+        type: 'PVP_ATTACKED',
+        actorIds: [PlayerId(3), PlayerId(5)],
+        distinctActors: 2,
+        groupCount: 5,
+        leadingActorId: PlayerId(2),
+      }),
+    ).toBe("You're under attack by Player 'Kael' and 1 other! (5 attacks)");
     // Leading attacker repeated and new attackers joined: name them all, count every held attack.
     const mix = { type: 'PVP_ATTACKED', leadingActorId: PlayerId(5), groupCount: 2 } as const;
     expect(msg({ ...mix, actorIds: [PlayerId(5), PlayerId(3)], distinctActors: 2 })).toBe(

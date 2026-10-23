@@ -306,6 +306,17 @@ describe('gates run before validation', () => {
     }
   });
 
+  it('session routes answer 401 before 400 when there is no session', async () => {
+    const { base } = await setup();
+    const call = api(base);
+    const patch = await call('/v1/preferences', { method: 'PATCH', json: { bogus: 1 } });
+    expect(patch.status).toBe(401);
+    expect(patch.body).toMatchObject({ title: 'Unauthorized' });
+    expect((await call('/v1/notifications?limit=abc')).status).toBe(401);
+    expect((await call('/v1/notifications/read-all', { method: 'POST', json: { upToSeq: 'x' } })).status).toBe(401);
+    expect((await call('/v1/notifications/not-an-id/read', { method: 'POST' })).status).toBe(401);
+  });
+
   it('dev routes answer 404 in production even for an invalid body', async () => {
     const { base } = await setup(prod);
     const call = api(base);

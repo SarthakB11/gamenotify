@@ -159,10 +159,14 @@ export function useNotificationStream(api: Api, onLive: (e: Entry) => void, onUn
       return next;
     });
   };
-  /** The server marked everything read, including entries older than the loaded page. */
-  const markAllLocal = () => {
-    setUnread(0);
-    setEntries((prev) => new Map([...prev].map(([k, e]) => [k, e.read ? e : { ...e, read: true }])));
+  /**
+   * The server marked everything up to `upToSeq` read, including entries older than the loaded page, and reports
+   * how many it flipped (`marked`). Anything newer arrived after the click and stays unread, so the count drops
+   * by what the server flipped instead of going to 0.
+   */
+  const markAllLocal = (upToSeq: number, marked: number) => {
+    setUnread((u) => Math.max(0, u - marked));
+    setEntries((prev) => new Map([...prev].map(([k, e]) => [k, e.read || k > upToSeq ? e : { ...e, read: true }])));
   };
   return { entries: sorted, status, unread, markLocal, markAllLocal };
 }

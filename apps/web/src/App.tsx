@@ -149,7 +149,11 @@ function Dashboard({
           entries={entries}
           unread={unread}
           onRead={(e) => api.markRead(e.notification.id).then(() => markLocal([e.seq]), guard)}
-          onReadAll={() => api.markAllRead().then(() => markAllLocal(), guard)}
+          onReadAll={() => {
+            // Bound by what the user is looking at: an entry that arrives during the request stays unread.
+            const upToSeq = entries[0]?.seq ?? 0;
+            return api.markAllRead(upToSeq).then((r) => markAllLocal(upToSeq, r.marked), guard);
+          }}
         />
         <PreferencesPanel api={api} onExpired={onExpired} />
       </section>

@@ -250,13 +250,13 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
     return reply.code(204).send();
   });
 
-  server.get('/v1/me', { preHandler: requirePlayer }, async (req) => {
+  server.get('/v1/me', { onRequest: requirePlayer }, async (req) => {
     const id = req.playerId as PlayerId;
     return { playerId: id, displayName: core.directory.get(id)?.displayName ?? `#${id}`, unread: core.inboxService.unread(id) };
   });
 
   // ── Real-time stream (SSE) ─────────────────────────────────────────────────
-  server.post('/v1/stream/ticket', { preHandler: requirePlayer }, async (req, reply) => {
+  server.post('/v1/stream/ticket', { onRequest: requirePlayer }, async (req, reply) => {
     const ticket = tickets.issue(req.playerId as PlayerId);
     if (ticket === null) {
       reply.header('Retry-After', '1');
@@ -268,7 +268,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   server.get<{ Querystring: { lastEventId?: string; ticket?: string } }>(
     '/v1/stream',
-    { preHandler: requireStreamAuth },
+    { onRequest: requireStreamAuth },
     (req, reply) => {
       const player = req.playerId as PlayerId;
       reply.hijack();
@@ -299,14 +299,19 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
       const inbox = core.inbox;
       const lastSeq = inbox.lastSeq(player);
-      const cursor = parseCursor(req.headers['last-event-id'] ?? req.query.lastEventId);
+      const rawCursor: unknown = req.headers['last-event-id'] ?? req.query.lastEventId;
+      const cursor = parseCursor(rawCursor);
+      // A client that sent a cursor expects continuity: one we cannot parse is a resync, not a first connect.
+      const malformed = cursor === null && rawCursor !== undefined && rawCursor !== '';
       const resync = (reason: string) => {
         metrics.inc('sse_resync_total', { reason });
         conn.write(controlFrame('resync', { reason, epoch: inbox.epoch, lastSeq }, cursorId(inbox.epoch, lastSeq)));
         conn.lastSeq = lastSeq;
       };
 
-      if (cursor === null) {
+      if (malformed) {
+        resync('malformed_cursor');
+      } else if (cursor === null) {
         conn.write(
           controlFrame(
             'hello',
@@ -344,7 +349,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
   // ── Inbox ──────────────────────────────────────────────────────────────────
   server.get<{ Querystring: { before?: number; limit: number } }>(
     '/v1/notifications',
-    { schema: { querystring: pageQuery }, preHandler: requirePlayer },
+    { schema: { querystring: pageQuery }, onRequest: requirePlayer },
     async (req) => {
       const page = core.inboxService.page(req.playerId as PlayerId, req.query.before ?? null, req.query.limit);
       return { ...page, entries: page.entries.map(toInboxEntryDto) };
@@ -353,7 +358,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   server.post<{ Params: { id: string } }>(
     '/v1/notifications/:id/read',
-    { schema: { params: idParams }, preHandler: requirePlayer },
+    { schema: { params: idParams }, onRequest: requirePlayer },
     async (req, reply) =>
       core.inboxService.markRead(req.playerId as PlayerId, req.params.id as NotificationId)
         ? reply.code(204).send()
@@ -362,13 +367,13 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   server.post<{ Body: { upToSeq?: number } | null }>(
     '/v1/notifications/read-all',
-    { schema: { body: readAllBody }, preHandler: requirePlayer },
+    { schema: { body: readAllBody }, onRequest: requirePlayer },
     async (req) => ({ marked: core.inboxService.markAllRead(req.playerId as PlayerId, req.body?.upToSeq) }),
   );
 
   // ── Preferences (merge-patch + ETag/If-Match) ──────────────────────────────
   const etag = (v: number) => `"v${v}"`;
-  server.get('/v1/preferences', { preHandler: requirePlayer }, async (req, reply) => {
+  server.get('/v1/preferences', { onRequest: requirePlayer }, async (req, reply) => {
     const p = core.preferences.get(req.playerId as PlayerId);
     reply.header('ETag', etag(p.version));
     return p;
@@ -376,7 +381,7 @@ export async function buildApp(config: ServerConfig, options: AppOptions = {}): 
 
   server.patch<{ Body: PreferencesPatch }>(
     '/v1/preferences',
-    { schema: { body: preferencesPatch }, preHandler: requirePlayer },
+    { schema: { body: preferencesPatch }, onRequest: requirePlayer },
     async (req, reply) => {
       const ifMatch = req.headers['if-match'];
       let expected: number | undefined;

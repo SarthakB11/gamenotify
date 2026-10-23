@@ -99,7 +99,8 @@ export class Api {
   streamTicket = () => this.call<{ ticket: string; expiresInMs: number }>('/v1/stream/ticket', { method: 'POST' });
   inbox = () => this.call<{ epoch: string; entries: Entry[]; unread: number }>('/v1/notifications?limit=50');
   markRead = (id: string) => this.call<void>(`/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
-  markAllRead = () => this.call<{ marked: number }>('/v1/notifications/read-all', { method: 'POST', json: {} });
+  markAllRead = (upToSeq: number) =>
+    this.call<{ marked: number }>('/v1/notifications/read-all', { method: 'POST', json: { upToSeq } });
   preferences = () => this.call<Preferences>('/v1/preferences');
   patchPreferences = (patch: Record<string, unknown>) =>
     this.call<Preferences>('/v1/preferences', { method: 'PATCH', json: patch });

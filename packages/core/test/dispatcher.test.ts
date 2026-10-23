@@ -262,6 +262,13 @@ describe('NotificationDispatcher end-to-end (in-process)', () => {
       ]);
     });
 
+    it('Bram, Kael, Mira, Mira: several new attackers, every held attack counted without "more"', async () => {
+      expect(await burst('attack', [2, 3, 4, 4])).toEqual([
+        "You're under attack by Player 'Bram'!",
+        "You're under attack by Player 'Kael' and 1 other! (3 attacks)",
+      ]);
+    });
+
     it('property: a digest names the leading actor only when it repeated, and a follower digest never does', async () => {
       await fc.assert(
         fc.asyncProperty(

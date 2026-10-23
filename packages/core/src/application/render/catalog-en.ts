@@ -92,6 +92,13 @@ export const EN_CATALOG = Object.freeze({
         message: `${quoted(input, lead)} attacked you ${count}${repeat ? ' more' : ''} ${plural(count, 'time', 'times')}!`,
       };
     }
+    // Several new attackers: no "more", because none of these attacks was already delivered.
+    if (distinct > 1) {
+      return {
+        title: 'Under Attack!',
+        message: `You're under attack by ${actorPhrase(input)}! (${count} ${plural(count, 'attack', 'attacks')})`,
+      };
+    }
     return { title: 'Under Attack!', message: `You're under attack by ${actorPhrase(input)}!` };
   },
   PVP_DEFEATED: (input) => ({
